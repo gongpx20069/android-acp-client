@@ -12,6 +12,7 @@ Start with:
 - `docs/README.md` - documentation map
 - `docs/product-requirements.md` - product scope and user flows
 - `docs/architecture.md` - app, bridge, ACP, and data model architecture
+- `docs/android-app.md` - Android app pairing MVP and validation
 - `docs/acp-bridge-contract.md` - Android-to-bridge API contract
 - `docs/machine-pairing.md` - Tailscale detection and QR-based machine pairing
 - `docs/security-model.md` - permissions, approvals, and threat model
@@ -19,7 +20,7 @@ Start with:
 
 ## Current Status
 
-This repository currently contains the initial project harness, design documentation, and a Python bridge MVP under `bridge/`. Android implementation files have not been scaffolded yet.
+This repository currently contains the initial project harness, design documentation, a Python bridge MVP under `bridge/`, and an Android app skeleton under `app/`.
 
 ## Bridge MVP
 

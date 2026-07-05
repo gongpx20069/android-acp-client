@@ -28,6 +28,7 @@ Persistent project context lives in:
 - `docs/README.md`
 - `docs/product-requirements.md`
 - `docs/architecture.md`
+- `docs/android-app.md`
 - `docs/acp-bridge-contract.md`
 - `docs/machine-pairing.md`
 - `docs/security-model.md`
@@ -98,6 +99,7 @@ Update docs whenever behavior changes:
 
 - Product behavior: update `docs/product-requirements.md`.
 - App/bridge/system structure: update `docs/architecture.md`.
+- Android app pairing, storage, navigation, or validation: update `docs/android-app.md`.
 - Bridge API or remote transport: update `docs/acp-bridge-contract.md`.
 - Machine onboarding, Tailscale startup, or QR pairing: update `docs/machine-pairing.md`.
 - Permissions, approvals, threat model: update `docs/security-model.md`.

@@ -6,6 +6,7 @@ This folder defines the project memory layer for the Android ACP Client.
 
 - `product-requirements.md` describes the target user experience, MVP, and feature boundaries.
 - `architecture.md` describes the app architecture, remote bridge architecture, data model, and key state flows.
+- `android-app.md` describes the Android app pairing MVP, storage, network calls, and validation.
 - `acp-bridge-contract.md` describes the non-ACP bridge APIs needed by the Android app.
 - `machine-pairing.md` describes Tailscale detection, bridge startup, QR pairing, and machine onboarding.
 - `security-model.md` describes permissions, approvals, threat model, and secure defaults.

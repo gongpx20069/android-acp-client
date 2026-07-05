@@ -27,6 +27,8 @@ Use a private network such as Tailscale, ZeroTier, or WireGuard. Public bridge e
 
 Bridge startup should prefer Tailscale when available. If Tailscale is missing, disconnected, or unauthenticated, the bridge may guide the user through setup before it generates an Android pairing QR code.
 
+The Android MVP permits cleartext HTTP/WebSocket traffic so it can connect to a bridge over private Tailscale or LAN endpoints. Public endpoints must use HTTPS/WSS before they are supported as a recommended deployment.
+
 ## Authentication Requirements
 
 - Every bridge must require authentication.

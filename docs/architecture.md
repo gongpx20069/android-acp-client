@@ -54,7 +54,7 @@ Planned Android modules:
 - `feature:diffs`: diff viewer.
 - `feature:logs`: logs and command output.
 
-Decision needed: confirm module boundaries when Android scaffolding begins.
+The current Android skeleton starts as a single `app` module. The module boundaries above are the target split once the pairing and machine-management flow stabilizes.
 
 ## Domain Model
 

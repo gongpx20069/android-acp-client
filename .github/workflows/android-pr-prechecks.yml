@@ -1,0 +1,48 @@
+name: Android PR prechecks
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradle/**"
+      - ".github/workflows/android-pr-prechecks.yml"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "app/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradle/**"
+      - ".github/workflows/android-pr-prechecks.yml"
+
+jobs:
+  android:
+    name: Android build and unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Run Android unit tests
+        run: gradle :app:testDebugUnitTest
+
+      - name: Compile debug Kotlin
+        run: gradle :app:compileDebugKotlin

@@ -66,6 +66,7 @@ Permission modes for MVP:
 
 - Add, edit, remove, and test remote bridge connections.
 - Add a machine by scanning a bridge-generated pairing QR code.
+- Add a machine by pasting the bridge-generated pairing deep link when in-app scanning is unavailable.
 - Show online/offline state.
 - Show bridge version and supported agents when available.
 - Support Tailscale or private-network addresses without requiring public exposure.

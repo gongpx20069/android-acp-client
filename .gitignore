@@ -1,0 +1,35 @@
+# Android / Gradle
+.gradle/
+build/
+*/build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Kotlin / Java
+*.class
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+dist/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets and local config
+.env
+.env.*
+*.keystore
+*.jks
+secrets.properties
+
+# Logs
+*.log
+logs/

@@ -1,6 +1,7 @@
 package com.gongpx.androidacpclient.data.bridge
 
 import com.gongpx.androidacpclient.data.model.Agent
+import com.gongpx.androidacpclient.data.model.AgentSessionInfo
 import com.gongpx.androidacpclient.data.model.ChatMessage
 import com.gongpx.androidacpclient.data.model.ChatMessageKind
 import com.gongpx.androidacpclient.data.model.ConnectionState
@@ -93,6 +94,33 @@ class BridgeClient {
         )
     }
 
+    suspend fun listSessions(machine: Machine, agentId: String, workspacePath: String): Result<List<AgentSessionInfo>> {
+        return sendRawBridgeMessage(
+            machine,
+            JSONObject()
+                .put("type", "session.list")
+                .put("agentId", agentId)
+                .put("workspacePath", workspacePath),
+        ).map { events ->
+            events.firstOrNull { it.optString("type") == "session.list.result" }
+                ?.optJSONArray("sessions")
+                .orEmpty()
+                .toSessionInfos()
+        }
+    }
+
+    suspend fun loadSession(machine: Machine, chatId: String, agentId: String, workspacePath: String, sessionId: String): Result<List<ChatMessage>> {
+        return sendBridgeMessage(
+            machine,
+            JSONObject()
+                .put("type", "session.load")
+                .put("chatId", chatId)
+                .put("agentId", agentId)
+                .put("workspacePath", workspacePath)
+                .put("sessionId", sessionId),
+        )
+    }
+
     private fun getJson(endpoint: String, path: String, headers: Map<String, String>): JSONObject {
         val connection = URL(toHttpBase(endpoint) + path).openConnection() as HttpURLConnection
         connection.requestMethod = "GET"
@@ -117,12 +145,24 @@ class BridgeClient {
     }
 
     private suspend fun sendBridgeMessage(machine: Machine, payload: JSONObject): Result<List<ChatMessage>> {
+        return sendRawBridgeMessage(machine, payload).map { events ->
+            val messages = mutableListOf<ChatMessage>()
+            events.forEach { event ->
+                parseBridgeMessage(event.toString()).message?.let { message ->
+                    mergeStreamingMessage(messages, message)
+                }
+            }
+            messages.toList()
+        }
+    }
+
+    private suspend fun sendRawBridgeMessage(machine: Machine, payload: JSONObject): Result<List<JSONObject>> {
         return suspendCancellableCoroutine { continuation ->
             val requestBuilder = Request.Builder().url(toWebSocketUrl(machine.endpoint, machine.deviceToken))
             machine.connectionHeaders.forEach { (name, value) ->
                 requestBuilder.addHeader(name, value)
             }
-            val messages = mutableListOf<ChatMessage>()
+            val events = mutableListOf<JSONObject>()
 
             var socket: WebSocket? = null
             socket = webSocketClient.newWebSocket(
@@ -133,17 +173,15 @@ class BridgeClient {
                     }
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        val parsed = parseBridgeMessage(text)
-                        if (parsed.done) {
+                        val json = runCatching { JSONObject(text) }.getOrNull()
+                        if (json?.optString("type") == "bridge.done") {
                             if (continuation.isActive) {
-                                continuation.resume(Result.success(messages.toList()))
+                                continuation.resume(Result.success(events.toList()))
                             }
                             webSocket.close(1000, "done")
                             return
                         }
-                        parsed.message?.let { message ->
-                            mergeStreamingMessage(messages, message)
-                        }
+                        events.add(json ?: JSONObject().put("type", "bridge.text").put("text", text))
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -219,7 +257,17 @@ class BridgeClient {
     private fun JSONObject.toChatMessage(): ChatMessage? {
         val sessionUpdate = optString("sessionUpdate")
         return when (sessionUpdate) {
-            "available_commands_update", "config_option_update", "usage_update" -> null
+            "config_option_update", "usage_update" -> null
+            "available_commands_update" -> {
+                ChatMessage(
+                    role = MessageRole.System,
+                    text = "Commands updated",
+                    timestampMillis = System.currentTimeMillis(),
+                    kind = ChatMessageKind.CommandUpdate,
+                    details = optJSONArray("availableCommands")?.toString().orEmpty(),
+                    activityId = "available_commands",
+                )
+            }
             "tool_call", "tool_call_update" -> {
                 val content = optJSONObject("content")
                 val status = optString("status").ifBlank { if (sessionUpdate == "tool_call") "started" else "updated" }
@@ -324,6 +372,20 @@ class BridgeClient {
                 displayName = item.getString("displayName"),
                 absolutePath = item.getString("absolutePath"),
             )
+        }
+
+        private fun JSONArray?.orEmpty(): JSONArray = this ?: JSONArray()
+
+        private fun JSONArray.toSessionInfos(): List<AgentSessionInfo> {
+            return List(length()) { index ->
+                val item = getJSONObject(index)
+                AgentSessionInfo(
+                    sessionId = item.getString("sessionId"),
+                    title = item.optString("title").ifBlank { null },
+                    cwd = item.optString("cwd").ifBlank { null },
+                    updatedAt = item.optString("updatedAt").ifBlank { null },
+                )
+            }
         }
     }
 

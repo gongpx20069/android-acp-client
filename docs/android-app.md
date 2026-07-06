@@ -17,6 +17,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - New Chat form with machine, per-chat workspace path, and agent selection.
 - Chat list and WhatsApp-style chat detail view with full conversation history.
 - Fixed bottom prompt box for sending chat messages.
+- Horizontally scrollable command chips above the prompt box.
 - Collapsible agent activity cards for ACP `tool_call` and `tool_call_update` events.
 - Approval list with approve/deny actions.
 
@@ -68,7 +69,8 @@ The app maps these bridge/ACP events:
 - Updates with the same `toolCallId` replace the existing activity card, so one tool call stays as one expandable row.
 - `session/update` + `agent_message_chunk` -> normal agent chat bubble. Streaming chunks are merged into one bubble instead of one word per message.
 - Empty `agent_thought_chunk` updates are ignored; non-empty thought chunks appear as expandable activity.
-- `available_commands_update`, `config_option_update`, and `usage_update` are suppressed in chat to avoid noisy setup cards on every prompt.
+- `available_commands_update` -> command chips above the prompt box.
+- `config_option_update` and `usage_update` are suppressed in chat to avoid noisy setup cards on every prompt.
 - `bridge.done` -> ends the current one-shot WebSocket request.
 
 ## Workspace Selection
@@ -81,7 +83,9 @@ The workspace does not have to be a Git repository, but Copilot's coding workflo
 
 ACP slash commands are not the same as Copilot CLI's interactive slash commands. In ACP, commands must be advertised by the agent through `available_commands_update` and then sent as normal prompt text, such as `/plan ...` when that command is available.
 
-`/resume` is not advertised by Copilot ACP as a slash command in the current CLI. Resuming is represented by ACP session methods such as `session/list`, `session/load`, and `session/resume`, which require a session ID and UI support. AgentLink does not yet expose session history/resume UI, so typing `/resume` in the prompt is treated as text by the agent rather than invoking Copilot CLI's interactive `/resume`.
+AgentLink displays advertised commands as chips without the slash prefix. Tapping a command chip sends `/<command>` as a prompt.
+
+`resume` is a built-in AgentLink chip rather than a prompt command. It opens a session picker backed by ACP `session/list`; choosing a session calls `session/load` for the current chat and workspace. Typing `/resume` in the prompt is still treated as plain prompt text unless the ACP agent explicitly advertises a `resume` slash command.
 
 ## Validation
 

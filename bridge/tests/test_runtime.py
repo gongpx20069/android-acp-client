@@ -118,6 +118,33 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(responses[0]["update"]["toolCallId"], "approval_1")
         self.assertEqual(responses[-1]["type"], "bridge.done")
 
+    def test_session_list_websocket_response_returns_sessions(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+
+        responses = runtime.websocket_responses({"type": "session.list", "agentId": "copilot-cli", "workspacePath": "D:\\repo"})
+
+        self.assertEqual(responses[0]["type"], "session.list.result")
+        self.assertEqual(responses[0]["sessions"][0]["sessionId"], "sess_1")
+        self.assertEqual(responses[-1]["type"], "bridge.done")
+
+    def test_session_load_websocket_response_streams_updates(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+
+        responses = runtime.websocket_responses({"type": "session.load", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "sessionId": "sess_1"})
+
+        self.assertEqual(responses[0]["update"]["sessionUpdate"], "agent_message_chunk")
+        self.assertEqual(responses[-1]["type"], "bridge.done")
+
 
 class FakeAgentManager:
     def prompt(self, request: AcpPromptRequest):
@@ -148,6 +175,20 @@ class FakeAgentManager:
                     "content": {"type": "text", "text": "hello back"},
                 },
             },
+        ]
+
+    def list_sessions(self, agent_id: str, workspace_path: str):
+        return [{"sessionId": "sess_1", "cwd": workspace_path, "title": "Previous work", "updatedAt": "2026-07-07T00:00:00Z"}]
+
+    def load_session(self, chat_id: str, agent_id: str, workspace_path: str, session_id: str):
+        return [
+            {
+                "type": "session/update",
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": f"Loaded {session_id}"},
+                },
+            }
         ]
 
 

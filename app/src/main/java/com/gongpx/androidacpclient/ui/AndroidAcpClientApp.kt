@@ -14,6 +14,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -53,6 +55,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,8 +70,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.gongpx.androidacpclient.data.bridge.BridgeClient
 import com.gongpx.androidacpclient.data.model.Agent
+import com.gongpx.androidacpclient.data.model.AgentSessionInfo
 import com.gongpx.androidacpclient.data.model.Approval
 import com.gongpx.androidacpclient.data.model.ApprovalStatus
+import com.gongpx.androidacpclient.data.model.AvailableCommand
 import com.gongpx.androidacpclient.data.model.Chat
 import com.gongpx.androidacpclient.data.model.ChatMessage
 import com.gongpx.androidacpclient.data.model.ChatMessageKind
@@ -86,6 +91,7 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 
 private enum class AppTab(val label: String, val icon: String) {
     Chats("Chats", "✦"),
@@ -109,6 +115,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
     var selectedChatId by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var scannerOpen by remember { mutableStateOf(false) }
+    var resumeDialogState by remember { mutableStateOf<ResumeDialogState?>(null) }
     val scope = rememberCoroutineScope()
 
     fun upsertMachine(machine: Machine) {
@@ -177,6 +184,48 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         val machine = machines.firstOrNull { it.id == approval.machineId } ?: return
         scope.launch {
             bridgeClient.sendApprovalDecision(machine, approval.id, if (status == ApprovalStatus.Approved) "approved" else "denied")
+        }
+    }
+
+    fun showResumeDialog(chat: Chat) {
+        val machine = machines.firstOrNull { it.id == chat.machineId }
+        if (machine == null) {
+            upsertChat(chat.withMessage(MessageRole.System, "Machine is not available."))
+            return
+        }
+        resumeDialogState = ResumeDialogState(chat = chat, sessions = null, error = null)
+        scope.launch {
+            bridgeClient.listSessions(machine, chat.agentId, chat.workspacePath)
+                .onSuccess { sessions ->
+                    resumeDialogState = ResumeDialogState(chat = chat, sessions = sessions, error = null)
+                }
+                .onFailure {
+                    resumeDialogState = ResumeDialogState(chat = chat, sessions = emptyList(), error = it.message)
+                }
+        }
+    }
+
+    fun loadResumeSession(chat: Chat, session: AgentSessionInfo) {
+        val machine = machines.firstOrNull { it.id == chat.machineId }
+        if (machine == null) {
+            upsertChat(chat.withMessage(MessageRole.System, "Machine is not available."))
+            return
+        }
+        resumeDialogState = null
+        val loading = chat.withActivity(
+            title = "Resume session",
+            summary = session.title ?: session.sessionId,
+            details = "sessionId=${session.sessionId}\ncwd=${session.cwd.orEmpty()}\nupdatedAt=${session.updatedAt.orEmpty()}",
+        )
+        upsertChat(loading)
+        scope.launch {
+            bridgeClient.loadSession(machine, chat.id, chat.agentId, chat.workspacePath, session.sessionId)
+                .onSuccess { events ->
+                    upsertChat(loading.copy(messages = loading.messages + events))
+                }
+                .onFailure {
+                    upsertChat(loading.withMessage(MessageRole.System, "Resume failed: ${it.message}"))
+                }
         }
     }
 
@@ -265,6 +314,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                             onCreateChat = ::createChat,
                             onOpenChat = { selectedChatId = it.id },
                             onBackToList = { selectedChatId = null },
+                            onResume = ::showResumeDialog,
                             onSendMessage = { chat, message ->
                                 val machine = machines.firstOrNull { it.id == chat.machineId }
                                 if (machine == null) {
@@ -311,6 +361,14 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                 }
             }
         }
+
+        resumeDialogState?.let { state ->
+            ResumeDialog(
+                state = state,
+                onDismiss = { resumeDialogState = null },
+                onSelect = { loadResumeSession(state.chat, it) },
+            )
+        }
     }
 }
 
@@ -323,12 +381,26 @@ private fun ChatsScreen(
     onCreateChat: (Machine, String, Agent) -> Unit,
     onOpenChat: (Chat) -> Unit,
     onBackToList: () -> Unit,
+    onResume: (Chat) -> Unit,
     onSendMessage: (Chat, String) -> Unit,
     onRequestApproval: (Chat) -> Unit,
 ) {
     val selectedChat = chats.firstOrNull { it.id == selectedChatId }
     if (selectedChat != null) {
-        ChatDetailScreen(padding, selectedChat, onBackToList, { onSendMessage(selectedChat, it) }, { onRequestApproval(selectedChat) })
+        ChatDetailScreen(
+            padding = padding,
+            chat = selectedChat,
+            onBack = onBackToList,
+            onSendMessage = { onSendMessage(selectedChat, it) },
+            onCommand = { command ->
+                if (command.name == BUILT_IN_RESUME_COMMAND.name) {
+                    onResume(selectedChat)
+                } else {
+                    onSendMessage(selectedChat, "/" + command.name)
+                }
+            },
+            onRequestApproval = { onRequestApproval(selectedChat) },
+        )
         return
     }
 
@@ -432,8 +504,18 @@ private fun ChatsScreen(
 }
 
 @Composable
-private fun ChatDetailScreen(padding: PaddingValues, chat: Chat, onBack: () -> Unit, onSendMessage: (String) -> Unit, onRequestApproval: () -> Unit) {
+private fun ChatDetailScreen(
+    padding: PaddingValues,
+    chat: Chat,
+    onBack: () -> Unit,
+    onSendMessage: (String) -> Unit,
+    onCommand: (AvailableCommand) -> Unit,
+    onRequestApproval: () -> Unit,
+) {
     var message by remember { mutableStateOf("") }
+    val commands = remember(chat.messages) {
+        listOf(BUILT_IN_RESUME_COMMAND) + chat.availableCommands().filterNot { it.name == BUILT_IN_RESUME_COMMAND.name }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -473,6 +555,23 @@ private fun ChatDetailScreen(padding: PaddingValues, chat: Chat, onBack: () -> U
 
         Surface(tonalElevation = 4.dp) {
             Column(Modifier.padding(12.dp)) {
+                if (commands.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        commands.forEach { command ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { onCommand(command) },
+                                label = { Text(command.name) },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
                 OutlinedTextField(
                     value = message,
                     onValueChange = { message = it },
@@ -491,6 +590,49 @@ private fun ChatDetailScreen(padding: PaddingValues, chat: Chat, onBack: () -> U
                         },
                     ) {
                         Text("Send")
+                    }
+
+                    @Composable
+                    private fun ResumeDialog(state: ResumeDialogState, onDismiss: () -> Unit, onSelect: (AgentSessionInfo) -> Unit) {
+                        AlertDialog(
+                            onDismissRequest = onDismiss,
+                            title = { Text("Resume session") },
+                            text = {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    state.error?.let {
+                                        Text("Could not load sessions: $it", color = MaterialTheme.colorScheme.error)
+                                    }
+                                    when (val sessions = state.sessions) {
+                                        null -> Text("Loading sessions from ${state.chat.agentName}...")
+                                        else -> {
+                                            if (sessions.isEmpty() && state.error == null) {
+                                                Text("No resumable sessions found for this workspace.")
+                                            }
+                                            sessions.take(8).forEach { session ->
+                                                Surface(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable { onSelect(session) },
+                                                    shape = RoundedCornerShape(14.dp),
+                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.70f),
+                                                ) {
+                                                    Column(Modifier.padding(12.dp)) {
+                                                        Text(session.title ?: session.sessionId, fontWeight = FontWeight.SemiBold)
+                                                        session.cwd?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                                                        session.updatedAt?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                OutlinedButton(onClick = onDismiss) {
+                                    Text("Close")
+                                }
+                            },
+                        )
                     }
                     OutlinedButton(onClick = onRequestApproval) {
                         Text("Test Approval")
@@ -878,3 +1020,29 @@ private fun Chat.withActivity(title: String, summary: String, details: String): 
         ),
     )
 }
+
+private fun Chat.availableCommands(): List<AvailableCommand> {
+    val latest = messages.lastOrNull { it.kind == ChatMessageKind.CommandUpdate && !it.details.isNullOrBlank() } ?: return emptyList()
+    val commandDetails = latest.details ?: return emptyList()
+    val array = runCatching { JSONArray(commandDetails) }.getOrNull() ?: return emptyList()
+    return List(array.length()) { index ->
+        val item = array.getJSONObject(index)
+        val input = item.optJSONObject("input")
+        AvailableCommand(
+            name = item.getString("name"),
+            description = item.optString("description"),
+            inputHint = input?.optString("hint")?.ifBlank { null },
+        )
+    }
+}
+
+private val BUILT_IN_RESUME_COMMAND = AvailableCommand(
+    name = "resume",
+    description = "Load a previous ACP session for this workspace.",
+)
+
+private data class ResumeDialogState(
+    val chat: Chat,
+    val sessions: List<AgentSessionInfo>?,
+    val error: String?,
+)

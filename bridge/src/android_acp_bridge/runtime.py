@@ -30,6 +30,12 @@ class AgentManager(Protocol):
     def prompt(self, request: AcpPromptRequest) -> list[dict[str, Any]]:
         ...
 
+    def list_sessions(self, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
+        ...
+
+    def load_session(self, chat_id: str, agent_id: str, workspace_path: str, session_id: str) -> list[dict[str, Any]]:
+        ...
+
 
 class BridgeRuntime:
     def __init__(
@@ -91,6 +97,10 @@ class BridgeRuntime:
         message_type = payload.get("type")
         if message_type == "chat.prompt":
             return self._chat_prompt_updates(payload)
+        if message_type == "session.list":
+            return self._session_list_response(payload)
+        if message_type == "session.load":
+            return self._session_load_response(payload)
         if message_type == "approval.decide":
             return self._approval_decision_updates(payload)
         return [{"type": "bridge.echo", "payload": payload}, {"type": "bridge.done"}]
@@ -156,6 +166,41 @@ class BridgeRuntime:
             },
             {"type": "bridge.done"},
         ]
+
+    def _session_list_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
+        workspace_path = _string_or_default(payload.get("workspacePath"), "")
+        try:
+            sessions = self.agent_manager.list_sessions(agent_id, workspace_path)
+            return [{"type": "session.list.result", "sessions": sessions}, {"type": "bridge.done"}]
+        except AcpAgentError as exc:
+            return [{"type": "session.list.result", "sessions": [], "error": str(exc)}, {"type": "bridge.done"}]
+
+    def _session_load_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
+        agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
+        workspace_path = _string_or_default(payload.get("workspacePath"), "")
+        session_id = _string_or_default(payload.get("sessionId"), "")
+        try:
+            updates = self.agent_manager.load_session(chat_id, agent_id, workspace_path, session_id)
+        except AcpAgentError as exc:
+            updates = [
+                {
+                    "type": "session/update",
+                    "chatId": chat_id,
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "session_load",
+                        "title": "Resume session",
+                        "kind": "other",
+                        "status": "failed",
+                        "content": {"error": str(exc)},
+                    },
+                }
+            ]
+        for update in updates:
+            update.setdefault("chatId", chat_id)
+        return updates + [{"type": "bridge.done", "chatId": chat_id}]
 
 
 def parse_device_info(value: Any) -> DeviceInfo | None:

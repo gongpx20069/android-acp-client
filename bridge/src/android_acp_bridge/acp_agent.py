@@ -33,6 +33,21 @@ class AcpAgentManager:
             self._sessions[request.chat_id] = session
         return session.prompt(request.prompt)
 
+    def list_sessions(self, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
+        session = AcpAgentSession.start_without_session(agent_id, workspace_path)
+        try:
+            return session.list_sessions(workspace_path)
+        finally:
+            session.stop()
+
+    def load_session(self, chat_id: str, agent_id: str, workspace_path: str, session_id: str) -> list[dict[str, Any]]:
+        old_session = self._sessions.pop(chat_id, None)
+        if old_session is not None:
+            old_session.stop()
+        session, updates = AcpAgentSession.load(agent_id, workspace_path, session_id)
+        self._sessions[chat_id] = session
+        return updates
+
 
 class AcpAgentSession:
     def __init__(self, process: subprocess.Popen[str], output_queue: queue.Queue[dict[str, Any]], session_id: str) -> None:
@@ -43,10 +58,22 @@ class AcpAgentSession:
 
     @classmethod
     def start(cls, agent_id: str, workspace_path: str) -> AcpAgentSession:
-        workspace = Path(workspace_path).expanduser().resolve()
-        if not workspace.exists() or not workspace.is_dir():
-            raise AcpAgentError(f"Workspace does not exist or is not a directory: {workspace}")
+        workspace = _resolve_workspace(workspace_path)
+        session = cls.start_without_session(agent_id, workspace_path)
+        result, updates = session._request(
+            "session/new",
+            {
+                "cwd": str(workspace),
+                "mcpServers": [],
+            },
+            timeout_seconds=60,
+        )
+        session._session_id = _extract_session_id(result)
+        return session
 
+    @classmethod
+    def start_without_session(cls, agent_id: str, workspace_path: str) -> AcpAgentSession:
+        workspace = _resolve_workspace(workspace_path)
         command = _agent_command(agent_id, workspace)
         process = subprocess.Popen(
             command,
@@ -81,16 +108,23 @@ class AcpAgentSession:
             },
             timeout_seconds=30,
         )
-        result, updates = session._request(
-            "session/new",
+        return session
+
+    @classmethod
+    def load(cls, agent_id: str, workspace_path: str, session_id: str) -> tuple[AcpAgentSession, list[dict[str, Any]]]:
+        workspace = _resolve_workspace(workspace_path)
+        session = cls.start_without_session(agent_id, workspace_path)
+        _result, updates = session._request(
+            "session/load",
             {
+                "sessionId": session_id,
                 "cwd": str(workspace),
                 "mcpServers": [],
             },
-            timeout_seconds=60,
+            timeout_seconds=120,
         )
-        session._session_id = _extract_session_id(result)
-        return session
+        session._session_id = session_id
+        return session, updates
 
     def prompt(self, prompt: str) -> list[dict[str, Any]]:
         _result, updates = self._request(
@@ -102,6 +136,25 @@ class AcpAgentSession:
             timeout_seconds=300,
         )
         return updates
+
+    def list_sessions(self, workspace_path: str) -> list[dict[str, Any]]:
+        workspace = _resolve_workspace(workspace_path)
+        result, _updates = self._request(
+            "session/list",
+            {"cwd": str(workspace)},
+            timeout_seconds=60,
+        )
+        sessions = result.get("sessions", [])
+        return sessions if isinstance(sessions, list) else []
+
+    def stop(self) -> None:
+        if self._process.poll() is None:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=5)
 
     def _request(self, method: str, params: dict[str, Any], timeout_seconds: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         request_id = self._next_id
@@ -159,6 +212,13 @@ def _agent_command(agent_id: str, workspace: Path) -> list[str]:
             raise AcpAgentError("Claude Code CLI is not installed or not on PATH.")
         return [claude, "--acp"]
     raise AcpAgentError(f"Unsupported agent: {agent_id}")
+
+
+def _resolve_workspace(workspace_path: str) -> Path:
+    workspace = Path(workspace_path).expanduser().resolve()
+    if not workspace.exists() or not workspace.is_dir():
+        raise AcpAgentError(f"Workspace does not exist or is not a directory: {workspace}")
+    return workspace
 
 
 def _extract_session_id(result: dict[str, Any]) -> str:

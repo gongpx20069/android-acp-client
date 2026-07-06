@@ -57,6 +57,19 @@ data class Chat(
     val messages: List<ChatMessage> = emptyList(),
 )
 
+data class AvailableCommand(
+    val name: String,
+    val description: String,
+    val inputHint: String? = null,
+)
+
+data class AgentSessionInfo(
+    val sessionId: String,
+    val title: String?,
+    val cwd: String?,
+    val updatedAt: String?,
+)
+
 data class ChatMessage(
     val role: MessageRole,
     val text: String,
@@ -76,6 +89,7 @@ enum class MessageRole {
 enum class ChatMessageKind {
     Message,
     Activity,
+    CommandUpdate,
 }
 
 data class Approval(

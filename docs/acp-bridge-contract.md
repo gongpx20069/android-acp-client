@@ -222,6 +222,50 @@ The bridge starts or reuses the ACP agent session for `chatId`, creates the sess
 }
 ```
 
+### List Sessions
+
+Android can request resumable ACP sessions for a workspace:
+
+```json
+{
+  "type": "session.list",
+  "agentId": "copilot-cli",
+  "workspacePath": "D:\\repos\\android-agent-link"
+}
+```
+
+Bridge response:
+
+```json
+{
+  "type": "session.list.result",
+  "sessions": [
+    {
+      "sessionId": "sess_abc",
+      "cwd": "D:\\repos\\android-agent-link",
+      "title": "Previous work",
+      "updatedAt": "2026-07-07T00:00:00Z"
+    }
+  ]
+}
+```
+
+### Load Session
+
+Android loads a selected session into the current chat:
+
+```json
+{
+  "type": "session.load",
+  "chatId": "chat_123",
+  "agentId": "copilot-cli",
+  "workspacePath": "D:\\repos\\android-agent-link",
+  "sessionId": "sess_abc"
+}
+```
+
+The bridge calls ACP `session/load`, forwards replayed `session/update` notifications, then sends `bridge.done`.
+
 ### Agent Update
 
 Bridge sends:

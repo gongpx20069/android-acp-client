@@ -5,7 +5,7 @@ import json
 import unittest
 from datetime import timedelta
 
-from android_acp_bridge.main import _parse_connection_headers
+from android_acp_bridge.main import _parse_connection_headers, _validate_pairing_endpoint
 from android_acp_bridge.pairing import PairingStore, build_pairing_payload, encode_pairing_deep_link, render_terminal_qr
 
 
@@ -69,6 +69,14 @@ class PairingTests(unittest.TestCase):
     def test_parse_connection_headers_rejects_other_headers(self) -> None:
         with self.assertRaises(SystemExit):
             _parse_connection_headers(["Authorization=Bearer token"])
+
+    def test_validate_pairing_endpoint_accepts_websocket_schemes(self) -> None:
+        self.assertEqual(_validate_pairing_endpoint("wss://example.devtunnels.ms/"), "wss://example.devtunnels.ms")
+        self.assertEqual(_validate_pairing_endpoint("ws://100.64.0.10:4317"), "ws://100.64.0.10:4317")
+
+    def test_validate_pairing_endpoint_rejects_http_scheme(self) -> None:
+        with self.assertRaises(SystemExit):
+            _validate_pairing_endpoint("https://example.devtunnels.ms")
 
     def test_terminal_qr_is_rendered(self) -> None:
         qr = render_terminal_qr("acpclient://pair?data=test")

@@ -22,15 +22,76 @@ Start with:
 
 This repository currently contains the initial project harness, design documentation, a Python bridge MVP under `bridge/`, and an Android app skeleton under `app/`.
 
-## Bridge MVP
+## Bridge startup options
+
+Run bridge commands from the repository root unless noted otherwise. `bridge\run.py` creates `bridge\.venv`, installs `bridge\requirements.txt`, and runs the bridge CLI.
+
+### Option 1: Tailscale private network (default)
+
+Use this when both the developer machine and Android device can sign in to the same Tailscale tailnet.
 
 ```powershell
 python .\bridge\run.py start
 ```
 
-The bridge requires Tailscale by default. On startup it checks for the Tailscale CLI, tries to install it automatically when a supported package manager is available, runs `tailscale up --qr` for login/connect, then prints an Android pairing link and compact CLI QR code that points at the machine's Tailscale endpoint. Sign in to the same Tailscale tailnet on Android before scanning.
+Startup behavior:
 
-Use `--allow-non-tailscale` only for localhost/manual testing; QR pairing does not provide network connectivity by itself.
+1. Checks whether the `tailscale` CLI exists.
+2. If missing, attempts automatic install with a supported package manager.
+3. If logged out or stopped, runs `tailscale up --qr`.
+4. Waits until a Tailscale IP is available.
+5. Binds the bridge to the Tailscale IP.
+6. Prints an AgentLink pairing link and compact CLI QR code.
+
+If Windows blocks `winget` with organization policy / exit code `1625`, install Tailscale through your company software portal, ask an administrator to approve `Tailscale.Tailscale`, or use the official installer from <https://tailscale.com/download/windows>.
+
+### Option 2: Microsoft Dev Tunnels private relay
+
+Use this when VPN/mesh networking is blocked but an authenticated Microsoft Dev Tunnel is acceptable. Do **not** use anonymous/public tunnels.
+
+Install the CLI without `winget` if package installation is blocked:
+
+```powershell
+Invoke-WebRequest -Uri https://aka.ms/TunnelsCliDownload/win-x64 -OutFile .\devtunnel.exe
+.\devtunnel.exe user login -d
+```
+
+Create or reuse a tunnel, add the bridge port, and get a short-lived connect token:
+
+```powershell
+.\devtunnel.exe create agentlink
+.\devtunnel.exe port create agentlink -p 4317 --protocol http
+.\devtunnel.exe token agentlink --scopes connect
+```
+
+Start the tunnel host in one terminal and copy the `https://...devtunnels.ms/` URL it prints:
+
+```powershell
+.\devtunnel.exe host agentlink
+```
+
+In another terminal, start the bridge on localhost but put the Dev Tunnel URL and token in the Android pairing QR. Convert the printed URL from `https://...devtunnels.ms/` to `wss://...devtunnels.ms`:
+
+```powershell
+python .\bridge\run.py start `
+  --allow-non-tailscale `
+  --host 127.0.0.1 `
+  --port 4317 `
+  --pairing-endpoint wss://<copied-devtunnel-host> `
+  --connection-header "X-Tunnel-Authorization=tunnel <connect-token>"
+```
+
+Android stores the `X-Tunnel-Authorization` header with that machine and sends it on bridge requests. Dev Tunnel connect tokens are short-lived, so re-scan a fresh pairing QR when the token expires.
+
+### Option 3: Localhost/manual testing only
+
+Use this only for local experiments. It does not make the developer machine reachable from a phone by itself.
+
+```powershell
+python .\bridge\run.py start --allow-non-tailscale
+```
+
+QR pairing only transfers endpoint metadata and credentials; network reachability still depends on Tailscale, Dev Tunnels, LAN, USB forwarding, or another transport.
 
 ## Debug APK Release
 

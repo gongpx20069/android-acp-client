@@ -149,6 +149,7 @@ Rules:
 - `bridgeFingerprint` should be saved by Android and checked on future connections.
 - `headers` is optional per-machine connection metadata. Android must persist it with the paired machine and send it on every bridge HTTP/WebSocket request for that machine.
 - Only relay-required headers should be included. The MVP supports `X-Tunnel-Authorization: tunnel <token>` for Microsoft Dev Tunnels private access.
+- For authenticated relay transports, generate the QR/link from the running bridge with `start --pairing-endpoint <wss-relay-url> --connection-header ...`. Do not use a standalone payload from `pairing` for a running server, because that command creates a separate token store.
 
 ## Pairing Handshake
 

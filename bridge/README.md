@@ -2,13 +2,23 @@
 
 Python MVP bridge for pairing AgentLink with a remote developer machine.
 
-## Development
+## Development setup
 
 ```powershell
 python .\run.py start
 ```
 
-The default server backend uses only the Python standard library. It requires Tailscale by default, checks Tailscale status, starts a local HTTP/WebSocket server on the machine's Tailscale IP, creates a short-lived pairing token, and prints both an Android pairing link and a compact CLI QR code on every bridge startup.
+The default server backend uses only the Python standard library. `run.py` creates `bridge\.venv` on first use, installs `requirements.txt`, and forwards every argument to the bridge CLI.
+
+## Starting the bridge
+
+### Tailscale mode (default)
+
+```powershell
+python .\run.py start
+```
+
+Tailscale mode starts the local HTTP/WebSocket server on the machine's Tailscale IP, creates a short-lived pairing token, and prints both an AgentLink pairing link and a compact CLI QR code.
 
 Default Tailscale setup flow:
 
@@ -21,7 +31,60 @@ The Android device must also be signed in to the same Tailscale tailnet. Use `--
 
 If Windows reports `组织策略正在阻止安装` / installer exit code `1625`, your organization blocks `winget` installs. The bridge will not bypass that policy; install Tailscale from your company software portal, ask an administrator to approve `Tailscale.Tailscale`, or use the official installer from <https://tailscale.com/download/windows>, then re-run `python .\run.py start`.
 
-`run.py` creates `bridge\.venv` on first use, installs `requirements.txt`, and forwards every argument to the bridge CLI. Package installation is still supported when you want the command on your PATH:
+### Microsoft Dev Tunnels private relay
+
+Use this when Tailscale/ZeroTier are blocked but a private authenticated Microsoft relay is acceptable. Do not enable anonymous Dev Tunnel access.
+
+Install the `devtunnel` CLI. If `winget` is blocked, use the direct executable download:
+
+```powershell
+Invoke-WebRequest -Uri https://aka.ms/TunnelsCliDownload/win-x64 -OutFile .\devtunnel.exe
+.\devtunnel.exe user login -d
+```
+
+Create a persistent tunnel and port:
+
+```powershell
+.\devtunnel.exe create agentlink
+.\devtunnel.exe port create agentlink -p 4317 --protocol http
+```
+
+Issue a short-lived connect token for Android:
+
+```powershell
+.\devtunnel.exe token agentlink --scopes connect
+```
+
+Start the Dev Tunnel host in terminal 1 and copy the printed `https://...devtunnels.ms/` URL:
+
+```powershell
+.\devtunnel.exe host agentlink
+```
+
+Start the AgentLink bridge in terminal 2. The server still listens locally, but the QR/link contains the Dev Tunnel `wss://` endpoint and `X-Tunnel-Authorization` header. Convert the printed URL from `https://...devtunnels.ms/` to `wss://...devtunnels.ms`:
+
+```powershell
+python .\run.py start `
+  --allow-non-tailscale `
+  --host 127.0.0.1 `
+  --port 4317 `
+  --pairing-endpoint wss://<copied-devtunnel-host> `
+  --connection-header "X-Tunnel-Authorization=tunnel <connect-token>"
+```
+
+Why `--pairing-endpoint` matters: the pairing token is created by the running bridge process. Do not use the standalone `pairing` command for the active Dev Tunnel server, because it creates a separate one-off token that the running server will not recognize.
+
+Android stores the relay header per machine and sends it on `/pairing/redeem`, `/health`, `/agents`, `/workspaces`, and future WebSocket requests for that machine. Dev Tunnel connect tokens currently expire after a short period, so regenerate and re-scan when access expires.
+
+### Localhost/manual testing
+
+```powershell
+python .\run.py start --allow-non-tailscale
+```
+
+This prints a QR/link for `ws://127.0.0.1:4317`. It is useful for local testing but will not make a developer machine reachable from Android unless another transport forwards the port.
+
+Package installation is still supported when you want the command on your PATH:
 
 ```powershell
 python -m venv .venv
@@ -65,13 +128,13 @@ python .\run.py pairing
 
 `start` runs automatic Tailscale setup by default. Use `--no-tailscale-setup` to only inspect current Tailscale status without installing or logging in.
 
-For authenticated relay transports such as private Microsoft Dev Tunnels, include the required connection header in the pairing QR/link:
+The standalone `pairing` command prints a sample pairing payload for an endpoint:
 
 ```powershell
 python .\run.py pairing --endpoint wss://example-4317.devtunnels.ms --connection-header "X-Tunnel-Authorization=tunnel <connect-token>"
 ```
 
-Android stores that header per machine and sends it on future bridge requests for that machine.
+Use `start --pairing-endpoint ...` instead when you need a pairing QR for a running bridge server.
 
 ## Optional Extras
 

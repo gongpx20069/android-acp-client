@@ -19,6 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     start_parser = subparsers.add_parser("start", help="Start the bridge server and print a pairing QR code")
     start_parser.add_argument("--host", default=None, help="Host to bind. Defaults to the Tailscale IP in Tailscale mode.")
     start_parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to bind.")
+    start_parser.add_argument("--pairing-endpoint", help="Endpoint to put in the Android pairing QR/link when a relay forwards to this bridge, e.g. wss://<id>-4317.devtunnels.ms.")
     start_parser.add_argument("--workspace", help="Allowed workspace path. Defaults to the current directory.")
     start_parser.add_argument("--allow-non-tailscale", action="store_true", help="Allow localhost/manual endpoint when Tailscale is unavailable.")
     start_parser.add_argument("--no-tailscale-setup", action="store_true", help="Skip automatic Tailscale install/login and only report current status.")
@@ -77,20 +78,23 @@ def _start(args: argparse.Namespace) -> int:
     else:
         bind_host = args.host or status.tailscale_ips[0]
 
+    pairing_endpoint = _validate_pairing_endpoint(args.pairing_endpoint) if args.pairing_endpoint else endpoint
+
     config = default_config(host=bind_host, port=args.port, workspace=args.workspace)
 
     pairing_store = PairingStore()
     token = pairing_store.create()
     payload = build_pairing_payload(
         machine_name=config.machine_name,
-        endpoint=endpoint,
+        endpoint=pairing_endpoint,
         token=token,
         bridge_fingerprint=config.bridge_fingerprint,
         headers=_parse_connection_headers(args.connection_header),
     )
     deep_link = encode_pairing_deep_link(payload)
 
-    print(f"Bridge endpoint: {endpoint}", flush=True)
+    print(f"Bridge bind endpoint: ws://{config.host}:{config.port}", flush=True)
+    print(f"Android pairing endpoint: {pairing_endpoint}", flush=True)
     print(f"Pairing expires at: {payload.expires_at}", flush=True)
     print("Android pairing link:", flush=True)
     print(deep_link, flush=True)
@@ -154,6 +158,13 @@ def _parse_connection_headers(values: list[str]) -> dict[str, str]:
             raise SystemExit("Only X-Tunnel-Authorization is currently supported as a pairing connection header.")
         headers[header_name] = header_value.strip()
     return headers
+
+
+def _validate_pairing_endpoint(value: str) -> str:
+    endpoint = value.strip().rstrip("/")
+    if not endpoint.startswith(("ws://", "wss://")):
+        raise SystemExit("--pairing-endpoint must start with ws:// or wss://.")
+    return endpoint
 
 
 def _configure_stdout() -> None:

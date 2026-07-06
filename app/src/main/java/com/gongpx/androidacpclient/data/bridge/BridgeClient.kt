@@ -102,10 +102,10 @@ class BridgeClient {
                 .put("agentId", agentId)
                 .put("workspacePath", workspacePath),
         ).map { events ->
-            events.firstOrNull { it.optString("type") == "session.list.result" }
+            val sessions = events.firstOrNull { it.optString("type") == "session.list.result" }
                 ?.optJSONArray("sessions")
                 ?: JSONArray()
-                .toSessionInfos()
+            sessions.toSessionInfos()
         }
     }
 

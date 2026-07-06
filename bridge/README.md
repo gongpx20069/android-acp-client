@@ -4,6 +4,25 @@ Python MVP bridge for pairing AgentLink with a remote developer machine.
 
 ## Development setup
 
+Recommended conda setup:
+
+```powershell
+cd bridge
+conda env create -f environment.yml
+conda activate android-acp-bridge
+android-acp-bridge start
+```
+
+If the environment already exists:
+
+```powershell
+cd bridge
+conda env update -n android-acp-bridge -f environment.yml --prune
+conda activate android-acp-bridge
+```
+
+Source checkout helper:
+
 ```powershell
 python .\run.py start
 ```
@@ -35,7 +54,15 @@ If Windows reports `组织策略正在阻止安装` / installer exit code `1625`
 
 Use this when Tailscale/ZeroTier are blocked but a private authenticated Microsoft relay is acceptable. Do not enable anonymous Dev Tunnel access.
 
-One command handles setup and startup:
+With conda:
+
+```powershell
+conda activate android-acp-bridge
+devtunnel user login -d
+android-acp-bridge start --transport devtunnel
+```
+
+Source checkout helper:
 
 ```powershell
 python .\run.py start --transport devtunnel
@@ -51,6 +78,14 @@ What it does:
 6. Starts `devtunnel host agentlink` as a child process.
 7. Starts the local bridge listener.
 8. Prints an AgentLink QR/link containing the Dev Tunnel `wss://` endpoint and `X-Tunnel-Authorization` header.
+
+If tunnel creation fails with `Unauthorized tunnel creation access: Anonymous does not have 'create' access scope`, the Dev Tunnel CLI is still anonymous or lacks access. Run:
+
+```powershell
+devtunnel user login -d
+```
+
+Then retry the bridge command. The bridge reports this as a setup error instead of printing a Python traceback.
 
 Optional overrides:
 
@@ -116,6 +151,7 @@ Install with conda:
 ```powershell
 conda env create -f environment.yml
 conda activate android-acp-bridge
+android-acp-bridge start
 ```
 
 ## Commands

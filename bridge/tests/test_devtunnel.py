@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 
 from android_acp_bridge.devtunnel import (
+    DevTunnelAuthError,
     create_or_reuse_tunnel,
+    ensure_devtunnel_login,
     ensure_devtunnel_cli,
     ensure_tunnel_port,
     issue_connect_token,
@@ -64,6 +66,31 @@ class DevTunnelTests(unittest.TestCase):
         create_or_reuse_tunnel("devtunnel", "agentlink", runner)
 
         self.assertEqual(commands, [["devtunnel", "show", "agentlink"], ["devtunnel", "create", "agentlink"]])
+
+    def test_create_or_reuse_tunnel_reports_anonymous_create_denial(self) -> None:
+        def runner(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+            if args[1] == "show":
+                return subprocess.CompletedProcess(args, 1, "", "")
+            return subprocess.CompletedProcess(args, 3, "", "Unauthorized tunnel creation access: Anonymous does not have 'create' access scope.")
+
+        with self.assertRaises(DevTunnelAuthError):
+            create_or_reuse_tunnel("devtunnel", "agentlink", runner)
+
+    def test_ensure_devtunnel_login_treats_anonymous_show_as_logged_out(self) -> None:
+        commands: list[list[str]] = []
+
+        def runner(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+            commands.append(args)
+            return subprocess.CompletedProcess(args, 0, "Anonymous", "")
+
+        original_run = subprocess.run
+        try:
+            subprocess.run = lambda args, check=False: subprocess.CompletedProcess(args, 0)  # type: ignore[assignment]
+            ensure_devtunnel_login("devtunnel", runner)
+        finally:
+            subprocess.run = original_run  # type: ignore[assignment]
+
+        self.assertEqual(commands, [["devtunnel", "user", "show"]])
 
     def test_ensure_tunnel_port_ignores_existing_port(self) -> None:
         def runner(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:

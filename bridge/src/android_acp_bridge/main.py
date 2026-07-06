@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .config import DEFAULT_PORT, default_config
-from .devtunnel import DEFAULT_TUNNEL_ID, DevTunnelHost, setup_devtunnel
+from .devtunnel import DEFAULT_TUNNEL_ID, DevTunnelAuthError, DevTunnelHost, setup_devtunnel
 from .pairing import PairingStore, build_pairing_payload, encode_pairing_deep_link, render_terminal_qr
 from .runtime import BridgeRuntime
 from .stdlib_server import run_server
@@ -74,12 +74,16 @@ def _start(args: argparse.Namespace) -> int:
     if args.transport == "devtunnel":
         bind_host = args.host or "127.0.0.1"
         endpoint = f"ws://{bind_host}:{args.port}"
-        devtunnel_host = setup_devtunnel(
-            bridge_root=Path(__file__).resolve().parents[2],
-            tunnel_id=args.devtunnel_id,
-            local_port=args.port,
-            cli_path=args.devtunnel_cli,
-        )
+        try:
+            devtunnel_host = setup_devtunnel(
+                bridge_root=Path(__file__).resolve().parents[2],
+                tunnel_id=args.devtunnel_id,
+                local_port=args.port,
+                cli_path=args.devtunnel_cli,
+            )
+        except DevTunnelAuthError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         pairing_endpoint = _validate_pairing_endpoint(args.pairing_endpoint) if args.pairing_endpoint else devtunnel_host.config.websocket_endpoint
         connection_headers.setdefault("X-Tunnel-Authorization", f"tunnel {devtunnel_host.config.connect_token}")
     elif args.transport == "local":

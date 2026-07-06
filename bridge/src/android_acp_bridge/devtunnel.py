@@ -53,6 +53,10 @@ class CommandExists(Protocol):
         ...
 
 
+class DevTunnelAuthError(RuntimeError):
+    pass
+
+
 def default_runner(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
 
@@ -81,7 +85,8 @@ def ensure_devtunnel_cli(
 
 def ensure_devtunnel_login(cli_path: str, runner: CommandRunner = default_runner) -> None:
     show = runner([cli_path, "user", "show"], 30)
-    if show.returncode == 0:
+    output = (show.stdout + "\n" + show.stderr).lower()
+    if show.returncode == 0 and "anonymous" not in output:
         return
 
     print("Dev Tunnel login required. Starting device-code login...", flush=True)
@@ -97,6 +102,12 @@ def create_or_reuse_tunnel(cli_path: str, tunnel_id: str, runner: CommandRunner 
 
     create = runner([cli_path, "create", tunnel_id], 60)
     if create.returncode != 0:
+        output = (create.stdout + "\n" + create.stderr).lower()
+        if "anonymous" in output or "unauthorized" in output or "not permitted" in output:
+            raise DevTunnelAuthError(
+                "Dev Tunnel creation was rejected because the CLI is not authenticated or lacks create access. "
+                "Run `devtunnel user login -d`, then retry `python .\\bridge\\run.py start --transport devtunnel`."
+            )
         raise RuntimeError(_command_error("devtunnel create", create))
 
 

@@ -19,6 +19,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - Fixed bottom prompt box for sending chat messages.
 - Horizontally scrollable command chips above the prompt box.
 - Built-in `model` chip that opens a model picker from ACP session config options.
+- Agent/system message bubbles render basic Markdown: headings, bullets, quotes, fenced code blocks, bold, italic, inline code, and link-style text.
 - Collapsible agent activity cards for ACP `tool_call` and `tool_call_update` events.
 - Approval list with approve/deny actions.
 

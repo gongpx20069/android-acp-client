@@ -64,7 +64,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -769,10 +774,143 @@ private fun ChatTimelineItem(item: ChatMessage) {
                 if (!isUser) {
                     Text(item.role.name, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = textColor.copy(alpha = 0.75f))
                 }
-                Text(item.text, color = textColor)
+                if (isUser) {
+                    Text(item.text, color = textColor)
+                } else {
+                    MarkdownMessageText(item.text, textColor)
+                }
             }
         }
     }
+}
+
+@Composable
+private fun MarkdownMessageText(text: String, color: Color) {
+    val lines = text.lines()
+    var inCodeBlock = false
+    val codeLines = mutableListOf<String>()
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (line in lines) {
+            if (line.trim().startsWith("```")) {
+                if (inCodeBlock) {
+                    CodeBlock(codeLines.joinToString("\n"))
+                    codeLines.clear()
+                    inCodeBlock = false
+                } else {
+                    inCodeBlock = true
+                }
+                continue
+            }
+
+            if (inCodeBlock) {
+                codeLines.add(line)
+                continue
+            }
+
+            val trimmed = line.trim()
+            when {
+                trimmed.isBlank() -> Spacer(Modifier.height(4.dp))
+                trimmed.startsWith("### ") -> Text(parseInlineMarkdown(trimmed.removePrefix("### ")), color = color, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                trimmed.startsWith("## ") -> Text(parseInlineMarkdown(trimmed.removePrefix("## ")), color = color, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                trimmed.startsWith("# ") -> Text(parseInlineMarkdown(trimmed.removePrefix("# ")), color = color, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                trimmed.startsWith("- ") || trimmed.startsWith("* ") -> Text(parseInlineMarkdown("• " + trimmed.drop(2)), color = color)
+                trimmed.startsWith("> ") -> QuoteBlock(trimmed.removePrefix("> "), color)
+                else -> Text(parseInlineMarkdown(line), color = color)
+            }
+        }
+        if (inCodeBlock && codeLines.isNotEmpty()) {
+            CodeBlock(codeLines.joinToString("\n"))
+        }
+    }
+}
+
+@Composable
+private fun CodeBlock(code: String) {
+    Surface(shape = RoundedCornerShape(10.dp), color = Color.Black.copy(alpha = 0.10f)) {
+        Text(
+            text = code,
+            modifier = Modifier.padding(10.dp),
+            fontFamily = FontFamily.Monospace,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
+private fun QuoteBlock(text: String, color: Color) {
+    Surface(shape = RoundedCornerShape(10.dp), color = Color.Black.copy(alpha = 0.06f)) {
+        Text(
+            text = parseInlineMarkdown(text),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            color = color,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+private fun parseInlineMarkdown(input: String): AnnotatedString {
+    val builder = AnnotatedString.Builder()
+    var index = 0
+    while (index < input.length) {
+        when {
+            input.startsWith("**", index) -> {
+                val end = input.indexOf("**", startIndex = index + 2)
+                if (end > index) {
+                    builder.pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                    builder.append(input.substring(index + 2, end))
+                    builder.pop()
+                    index = end + 2
+                } else {
+                    builder.append(input[index])
+                    index++
+                }
+            }
+            input[index] == '`' -> {
+                val end = input.indexOf('`', startIndex = index + 1)
+                if (end > index) {
+                    builder.pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = Color.Black.copy(alpha = 0.10f)))
+                    builder.append(input.substring(index + 1, end))
+                    builder.pop()
+                    index = end + 1
+                } else {
+                    builder.append(input[index])
+                    index++
+                }
+            }
+            input[index] == '*' -> {
+                val end = input.indexOf('*', startIndex = index + 1)
+                if (end > index) {
+                    builder.pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
+                    builder.append(input.substring(index + 1, end))
+                    builder.pop()
+                    index = end + 1
+                } else {
+                    builder.append(input[index])
+                    index++
+                }
+            }
+            input[index] == '[' -> {
+                val close = input.indexOf(']', startIndex = index + 1)
+                val openParen = if (close > index) input.indexOf('(', startIndex = close + 1) else -1
+                val closeParen = if (openParen == close + 1) input.indexOf(')', startIndex = openParen + 1) else -1
+                if (close > index && openParen == close + 1 && closeParen > openParen) {
+                    builder.pushStyle(SpanStyle(color = Color(0xFF2563EB), textDecoration = TextDecoration.Underline))
+                    builder.append(input.substring(index + 1, close))
+                    builder.pop()
+                    index = closeParen + 1
+                } else {
+                    builder.append(input[index])
+                    index++
+                }
+            }
+            else -> {
+                builder.append(input[index])
+                index++
+            }
+        }
+    }
+    return builder.toAnnotatedString()
 }
 
 @Composable

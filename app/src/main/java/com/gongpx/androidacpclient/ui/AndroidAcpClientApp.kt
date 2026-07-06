@@ -411,7 +411,12 @@ private fun ChatsScreen(
     var selectedAgentId by remember(selectedMachine) { mutableStateOf(selectedMachine?.agents?.firstOrNull()?.id.orEmpty()) }
     val selectedAgent = selectedMachine?.agents?.firstOrNull { it.id == selectedAgentId } ?: selectedMachine?.agents?.firstOrNull()
 
-    var newChatExpanded by remember(chats.isEmpty()) { mutableStateOf(chats.isEmpty()) }
+    var newChatExpanded by remember { mutableStateOf(chats.isEmpty()) }
+    LaunchedEffect(chats.isEmpty()) {
+        if (chats.isEmpty()) {
+            newChatExpanded = true
+        }
+    }
 
     LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
@@ -425,9 +430,10 @@ private fun ChatsScreen(
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
                         }
-                        OutlinedButton(onClick = { newChatExpanded = !newChatExpanded }) {
-                            Text(if (newChatExpanded) "Collapse" else "New")
-                        }
+                        NewChatTogglePill(
+                            expanded = newChatExpanded,
+                            onClick = { newChatExpanded = !newChatExpanded },
+                        )
                     }
                     if (newChatExpanded) {
                         Spacer(Modifier.height(10.dp))
@@ -788,6 +794,28 @@ private fun MachinesScreen(
                 MachineCard(machine = machine, onRefresh = { onRefreshMachine(machine) })
             }
         }
+    }
+}
+
+@Composable
+private fun NewChatTogglePill(expanded: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(999.dp),
+        color = if (expanded) {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+        } else {
+            MaterialTheme.colorScheme.primary
+        },
+        tonalElevation = 3.dp,
+    ) {
+        Text(
+            text = if (expanded) "Hide" else "+ New",
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            color = if (expanded) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onPrimary,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 

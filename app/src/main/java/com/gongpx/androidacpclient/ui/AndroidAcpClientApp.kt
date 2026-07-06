@@ -231,32 +231,32 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                     upsertChat(loading.withMessage(MessageRole.System, "Resume failed: ${it.message}"))
                 }
         }
+    }
 
-        fun showModelDialog(chat: Chat, option: ConfigOption) {
-                modelDialogState = ModelDialogState(chat = chat, option = option)
+    fun showModelDialog(chat: Chat, option: ConfigOption) {
+        modelDialogState = ModelDialogState(chat = chat, option = option)
+    }
+
+    fun setModel(chat: Chat, option: ConfigOption, value: ConfigOptionValue) {
+        val machine = machines.firstOrNull { it.id == chat.machineId }
+        if (machine == null) {
+            upsertChat(chat.withMessage(MessageRole.System, "Machine is not available."))
+            return
         }
-
-        fun setModel(chat: Chat, option: ConfigOption, value: ConfigOptionValue) {
-                val machine = machines.firstOrNull { it.id == chat.machineId }
-                if (machine == null) {
-                    upsertChat(chat.withMessage(MessageRole.System, "Machine is not available."))
-                    return
+        modelDialogState = null
+        val changing = chat.withActivity(
+            title = "Set model",
+            summary = value.name,
+            details = "configId=${option.id}\nvalue=${value.value}\n${value.description.orEmpty()}",
+        )
+        upsertChat(changing)
+        scope.launch {
+            bridgeClient.setConfigOption(machine, chat.id, chat.agentId, chat.workspacePath, option.id, value.value)
+                .onSuccess { events ->
+                    upsertChat(changing.copy(messages = changing.messages + events))
                 }
-                modelDialogState = null
-                val changing = chat.withActivity(
-                    title = "Set model",
-                    summary = value.name,
-                    details = "configId=${option.id}\nvalue=${value.value}\n${value.description.orEmpty()}",
-                )
-                upsertChat(changing)
-                scope.launch {
-                    bridgeClient.setConfigOption(machine, chat.id, chat.agentId, chat.workspacePath, option.id, value.value)
-                        .onSuccess { events ->
-                            upsertChat(changing.copy(messages = changing.messages + events))
-                        }
-                        .onFailure {
-                            upsertChat(changing.withMessage(MessageRole.System, "Model change failed: ${it.message}"))
-                        }
+                .onFailure {
+                    upsertChat(changing.withMessage(MessageRole.System, "Model change failed: ${it.message}"))
                 }
         }
     }

@@ -1,0 +1,3 @@
+# Base bridge runtime for source checkouts.
+# Python package metadata and runtime dependencies are declared in pyproject.toml.
+-e .

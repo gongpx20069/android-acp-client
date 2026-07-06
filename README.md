@@ -25,9 +25,11 @@ This repository currently contains the initial project harness, design documenta
 ## Bridge MVP
 
 ```powershell
-cd bridge
-$env:PYTHONPATH="$PWD\src"
-python -m android_acp_bridge.main start --allow-non-tailscale
+python .\bridge\run.py start --allow-non-tailscale
 ```
 
 The default bridge server uses only the Python standard library. For normal use, run with Tailscale connected so the generated QR code contains a private-network endpoint.
+
+## Debug APK Release
+
+Run the **Build Android APK** GitHub Actions workflow manually. It builds `app-debug.apk` and attaches the APK directly to a prerelease instead of requiring users to download a zipped workflow artifact.

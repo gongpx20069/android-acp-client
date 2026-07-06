@@ -20,8 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     start_parser.add_argument("--workspace", help="Allowed workspace path. Defaults to the current directory.")
     start_parser.add_argument("--allow-non-tailscale", action="store_true", help="Allow localhost/manual endpoint when Tailscale is unavailable.")
     start_parser.add_argument("--auto-approve-pairing", action="store_true", help="Skip local pairing confirmation. Use only for tests or trusted local demos.")
-    start_parser.add_argument("--server", choices=("stdlib", "fastapi"), default="stdlib", help="Server backend. Defaults to stdlib with no external dependencies.")
-    start_parser.add_argument("--no-qr", action="store_true", help="Print pairing link without terminal QR art.")
+    start_parser.add_argument("--server", choices=("stdlib", "fastapi"), default="stdlib", help="Server backend. Defaults to the standard-library backend.")
 
     subparsers.add_parser("tailscale-status", help="Print the detected Tailscale status")
 
@@ -81,12 +80,12 @@ def _start(args: argparse.Namespace) -> int:
     )
     deep_link = encode_pairing_deep_link(payload)
 
-    print(f"Bridge endpoint: {endpoint}")
-    print(f"Pairing expires at: {payload.expires_at}")
-    print("Android pairing link:")
-    print(deep_link)
-    if not args.no_qr:
-        print(render_terminal_qr(deep_link))
+    print(f"Bridge endpoint: {endpoint}", flush=True)
+    print(f"Pairing expires at: {payload.expires_at}", flush=True)
+    print("Android pairing link:", flush=True)
+    print(deep_link, flush=True)
+    print("Android pairing QR:", flush=True)
+    print(render_terminal_qr(deep_link), flush=True)
 
     runtime = BridgeRuntime(
         config=config,
@@ -121,7 +120,7 @@ def _run_fastapi(runtime: BridgeRuntime) -> None:
 
         from .server import create_app
     except ImportError as exc:
-        raise SystemExit("FastAPI server backend requires: python -m pip install -e .[fastapi]") from exc
+        raise SystemExit("FastAPI server backend requires: python -m pip install -r requirements-fastapi.txt") from exc
 
     uvicorn.run(create_app(runtime), host=runtime.config.host, port=runtime.config.port)
 

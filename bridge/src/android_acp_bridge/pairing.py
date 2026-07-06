@@ -105,10 +105,7 @@ def encode_pairing_deep_link(payload: PairingPayload) -> str:
 
 
 def render_terminal_qr(value: str) -> str:
-    try:
-        import qrcode
-    except ImportError:
-        return "QR rendering requires the optional `qrcode` dependency. Use the pairing link above."
+    import qrcode
 
     qr = qrcode.QRCode(border=1)
     qr.add_data(value)
@@ -120,5 +117,5 @@ def _qr_to_ascii(qr: Any) -> str:
     rows: list[str] = []
     matrix = qr.get_matrix()
     for row in matrix:
-        rows.append("".join("██" if cell else "  " for cell in row))
+        rows.append("".join("##" if cell else "  " for cell in row))
     return "\n".join(rows)

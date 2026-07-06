@@ -1,0 +1,2 @@
+# Bridge runtime with the optional FastAPI server backend.
+-e .[fastapi]

@@ -5,27 +5,51 @@ Python MVP bridge for pairing Android ACP Client with a remote developer machine
 ## Development
 
 ```powershell
-cd bridge
-$env:PYTHONPATH="$PWD\src"
-python -m android_acp_bridge.main start --allow-non-tailscale
+python .\run.py start --allow-non-tailscale
 ```
 
-The default server backend uses only the Python standard library. It checks Tailscale status, starts a local HTTP/WebSocket server, creates a short-lived pairing token, and prints an Android pairing QR payload.
+The default server backend uses only the Python standard library. It checks Tailscale status, starts a local HTTP/WebSocket server, creates a short-lived pairing token, and prints both an Android pairing link and terminal QR code on every bridge startup.
 
-Optional package installation is still supported:
+`run.py` creates `bridge\.venv` on first use, installs `requirements.txt`, and forwards every argument to the bridge CLI. Package installation is still supported when you want the command on your PATH:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python -m pip install -e .
+.\.venv\Scripts\python -m pip install -r requirements.txt
 .\.venv\Scripts\android-acp-bridge start
+```
+
+## Requirements
+
+The bridge may use third-party Python packages, but every dependency must be declared in `pyproject.toml` and exposed through a requirements file so users can install it with pip, uv, or conda.
+
+Run these commands from the `bridge` directory.
+
+| File | Purpose |
+| --- | --- |
+| `requirements.txt` | Base bridge runtime. |
+| `requirements-fastapi.txt` | Base runtime plus the optional FastAPI server backend. |
+| `requirements-all.txt` | Base runtime plus all optional extras. |
+
+Install with uv:
+
+```powershell
+uv venv
+uv pip install -r requirements.txt
+```
+
+Install with conda:
+
+```powershell
+conda env create -f environment.yml
+conda activate android-acp-bridge
 ```
 
 ## Commands
 
 ```powershell
-android-acp-bridge start
-android-acp-bridge tailscale-status
-android-acp-bridge pairing
+python .\run.py start
+python .\run.py tailscale-status
+python .\run.py pairing
 ```
 
 `start` does not run `tailscale up` automatically by default. It prints guidance when Tailscale is missing, stopped, or needs login.
@@ -33,9 +57,8 @@ android-acp-bridge pairing
 ## Optional Extras
 
 ```powershell
-python -m pip install -e .[qr]
-python -m pip install -e .[fastapi]
+python -m pip install -r requirements-fastapi.txt
 ```
 
-- `qr` enables terminal QR rendering with the `qrcode` package.
+- `qrcode` is part of the required bridge runtime so pairing can render terminal QR codes by default.
 - `fastapi` enables the optional FastAPI/uvicorn server backend.

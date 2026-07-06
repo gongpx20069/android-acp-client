@@ -35,9 +35,9 @@ Initial choices:
 - Python standard library HTTP/WebSocket server as the default runtime path
 - Tailscale CLI integration through subprocess calls
 - Optional FastAPI/Pydantic/uvicorn backend for future richer transport work
-- Optional `qrcode` dependency for terminal QR rendering
+- Required `qrcode` dependency for terminal QR rendering
 
-The Python bridge is optimized for MVP speed and cross-platform development. The default path avoids external runtime dependencies so a developer can run from source with `PYTHONPATH=bridge/src`. A later release may package it as a standalone executable so developer machines do not need to install Python manually.
+The Python bridge is optimized for MVP speed and cross-platform development. The default source-checkout path is `python bridge\run.py`, which creates a local virtual environment, installs `bridge\requirements.txt`, and runs the package entry point without requiring users to set `PYTHONPATH`. Third-party bridge dependencies must be declared in `pyproject.toml` and exposed through requirements files for pip, uv, and conda installation. A later release may package it as a standalone executable so developer machines do not need to install Python manually.
 
 ## App Modules
 

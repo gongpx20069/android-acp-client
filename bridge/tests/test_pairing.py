@@ -5,7 +5,7 @@ import json
 import unittest
 from datetime import timedelta
 
-from android_acp_bridge.pairing import PairingStore, build_pairing_payload, encode_pairing_deep_link
+from android_acp_bridge.pairing import PairingStore, build_pairing_payload, encode_pairing_deep_link, render_terminal_qr
 
 
 class PairingTests(unittest.TestCase):
@@ -41,7 +41,12 @@ class PairingTests(unittest.TestCase):
         self.assertEqual(body["machineName"], "devbox")
         self.assertEqual(body["endpoint"], "ws://100.64.0.10:4317")
 
+    def test_terminal_qr_is_rendered(self) -> None:
+        qr = render_terminal_qr("acpclient://pair?data=test")
+
+        self.assertIn("##", qr)
+        self.assertGreater(len(qr.splitlines()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
-

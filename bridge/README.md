@@ -85,6 +85,12 @@ If tunnel creation fails with `Unauthorized tunnel creation access: Anonymous do
 devtunnel user login -d
 ```
 
+If `devtunnel` is not on PATH and the bridge downloaded its private copy, run:
+
+```powershell
+.\bridge\.tools\devtunnel.exe user login -d
+```
+
 Then retry the bridge command. The bridge reports this as a setup error instead of printing a Python traceback.
 
 Optional overrides:

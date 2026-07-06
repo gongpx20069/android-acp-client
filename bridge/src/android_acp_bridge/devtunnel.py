@@ -106,7 +106,9 @@ def create_or_reuse_tunnel(cli_path: str, tunnel_id: str, runner: CommandRunner 
         if "anonymous" in output or "unauthorized" in output or "not permitted" in output:
             raise DevTunnelAuthError(
                 "Dev Tunnel creation was rejected because the CLI is not authenticated or lacks create access. "
-                "Run `devtunnel user login -d`, then retry `python .\\bridge\\run.py start --transport devtunnel`."
+                "Run `devtunnel user login -d` if devtunnel is on PATH, or "
+                "`\\.\\bridge\\.tools\\devtunnel.exe user login -d` when using the bridge-downloaded CLI. "
+                "Then retry `python .\\bridge\\run.py start --transport devtunnel`."
             )
         raise RuntimeError(_command_error("devtunnel create", create))
 

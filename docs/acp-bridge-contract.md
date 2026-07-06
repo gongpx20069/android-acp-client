@@ -31,16 +31,16 @@ Public internet exposure is not the default.
 
 ## Startup and Pairing
 
-On startup, the bridge should check whether a private-network endpoint is available before showing Android pairing information. Tailscale is the preferred MVP transport.
+On startup, the bridge should check whether a Tailscale endpoint is available before showing Android pairing information. Tailscale is the required default MVP transport; non-Tailscale mode is an explicit localhost/manual testing opt-in.
 
 Startup flow:
 
 ```text
 detect Tailscale
-  if missing: guide install or require explicit non-Tailscale mode
-  if not logged in/running: guide `tailscale up`
-  if running: select Tailscale endpoint
-start bridge listener
+  if missing: attempt automatic install, then show platform guidance if install cannot run
+  if not logged in/running: run `tailscale up --qr`
+  wait until a Tailscale IP is available
+start bridge listener on the Tailscale IP
 generate one-time pairing token
 show Android pairing QR code
 ```

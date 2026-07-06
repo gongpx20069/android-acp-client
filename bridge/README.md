@@ -5,10 +5,19 @@ Python MVP bridge for pairing Android ACP Client with a remote developer machine
 ## Development
 
 ```powershell
-python .\run.py start --allow-non-tailscale
+python .\run.py start
 ```
 
-The default server backend uses only the Python standard library. It checks Tailscale status, starts a local HTTP/WebSocket server, creates a short-lived pairing token, and prints both an Android pairing link and a compact CLI QR code on every bridge startup.
+The default server backend uses only the Python standard library. It requires Tailscale by default, checks Tailscale status, starts a local HTTP/WebSocket server on the machine's Tailscale IP, creates a short-lived pairing token, and prints both an Android pairing link and a compact CLI QR code on every bridge startup.
+
+Default Tailscale setup flow:
+
+1. Check whether the `tailscale` CLI is installed.
+2. If missing, try to install it automatically with `winget` on Windows, Homebrew on macOS, or the official Tailscale install script on Linux.
+3. If installed but logged out or stopped, run `tailscale up --qr` so you can complete Tailscale login.
+4. Re-check status and only generate the Android pairing QR after a Tailscale IP is available.
+
+The Android device must also be signed in to the same Tailscale tailnet. Use `--allow-non-tailscale` only for localhost/manual testing.
 
 `run.py` creates `bridge\.venv` on first use, installs `requirements.txt`, and forwards every argument to the bridge CLI. Package installation is still supported when you want the command on your PATH:
 
@@ -52,7 +61,7 @@ python .\run.py tailscale-status
 python .\run.py pairing
 ```
 
-`start` does not run `tailscale up` automatically by default. It prints guidance when Tailscale is missing, stopped, or needs login.
+`start` runs automatic Tailscale setup by default. Use `--no-tailscale-setup` to only inspect current Tailscale status without installing or logging in.
 
 ## Optional Extras
 

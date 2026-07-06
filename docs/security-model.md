@@ -23,9 +23,9 @@ External services
 
 ## Default Deployment
 
-Use a private network such as Tailscale, ZeroTier, or WireGuard. Public bridge exposure is not required for personal use and should not be the default recommendation.
+Use Tailscale as the default private network. Public bridge exposure is not required for personal use and should not be the default recommendation.
 
-Bridge startup should prefer Tailscale when available. If Tailscale is missing, disconnected, or unauthenticated, the bridge may guide the user through setup before it generates an Android pairing QR code.
+Bridge startup requires Tailscale by default. If Tailscale is missing, disconnected, or unauthenticated, the bridge should attempt automatic setup with a supported package manager and `tailscale up --qr` before it generates an Android pairing QR code. Non-Tailscale mode must remain an explicit localhost/manual testing opt-in.
 
 The Android MVP permits cleartext HTTP/WebSocket traffic so it can connect to a bridge over private Tailscale or LAN endpoints. Public endpoints must use HTTPS/WSS before they are supported as a recommended deployment.
 

@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import json
+import subprocess
 import unittest
 
-from android_acp_bridge.tailscale import TailscaleState, build_websocket_endpoint, parse_status
+from android_acp_bridge.tailscale import (
+    TailscaleState,
+    build_install_command,
+    build_websocket_endpoint,
+    ensure_tailscale_ready,
+    get_status,
+    install_guidance,
+    parse_status,
+)
 
 
 class TailscaleTests(unittest.TestCase):
@@ -33,7 +43,63 @@ class TailscaleTests(unittest.TestCase):
         self.assertEqual(status.state, TailscaleState.STOPPED)
         self.assertIsNone(build_websocket_endpoint(status, 4317))
 
+    def test_get_status_reports_missing_cli(self) -> None:
+        status = get_status(command_exists=lambda _command: None)
+
+        self.assertEqual(status.state, TailscaleState.CLI_MISSING)
+        self.assertIn("requires Tailscale", status.message or "")
+
+    def test_build_install_command_uses_winget_on_windows(self) -> None:
+        command = build_install_command("Windows", lambda name: f"C:\\tools\\{name}.exe" if name == "winget" else None)
+
+        self.assertEqual(command[:6], ["winget", "install", "--id", "Tailscale.Tailscale", "--exact", "--source"])
+
+    def test_build_install_command_uses_official_script_on_linux(self) -> None:
+        command = build_install_command("Linux", lambda name: f"/usr/bin/{name}" if name in {"curl", "sh"} else None)
+
+        self.assertEqual(command, ["sh", "-c", "curl -fsSL https://tailscale.com/install.sh | sh"])
+
+    def test_install_guidance_mentions_platform_package_manager(self) -> None:
+        self.assertIn("winget install", install_guidance("Windows"))
+        self.assertIn("brew install", install_guidance("Darwin"))
+        self.assertIn("tailscale.com/install.sh", install_guidance("Linux"))
+
+    def test_ensure_ready_installs_then_runs_tailscale_up(self) -> None:
+        state = {"installed": False, "running": False}
+        commands: list[list[str]] = []
+
+        def command_exists(command: str) -> str | None:
+            if command == "tailscale":
+                return "tailscale" if state["installed"] else None
+            if command == "winget":
+                return "winget"
+            return None
+
+        def runner(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+            commands.append(args)
+            if args[0] == "winget":
+                state["installed"] = True
+                return subprocess.CompletedProcess(args, 0, "", "")
+            if args == ["tailscale", "up", "--qr"]:
+                state["running"] = True
+                return subprocess.CompletedProcess(args, 0, "https://login.tailscale.com/a/test", "")
+            if args == ["tailscale", "status", "--json"]:
+                payload = (
+                    {"BackendState": "Running", "Self": {"TailscaleIPs": ["100.64.0.10"], "DNSName": "devbox.tailnet.ts.net."}}
+                    if state["running"]
+                    else {"BackendState": "NeedsLogin", "AuthURL": "https://login.tailscale.com/a/test"}
+                )
+                return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+            raise AssertionError(f"unexpected command: {args}")
+
+        result = ensure_tailscale_ready(runner=runner, command_exists=command_exists, system="Windows", sleep=lambda _seconds: None)
+
+        self.assertEqual(result.status.state, TailscaleState.RUNNING)
+        self.assertIn(["winget", "install", "--id", "Tailscale.Tailscale", "--exact", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements"], commands)
+        self.assertIn(["tailscale", "up", "--qr"], commands)
+        self.assertTrue(any("same Tailscale account" in step for step in result.steps))
+        self.assertTrue(any("Waiting for Tailscale" in step for step in result.steps))
+
 
 if __name__ == "__main__":
     unittest.main()
-

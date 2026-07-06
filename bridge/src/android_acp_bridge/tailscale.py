@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import platform
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
@@ -33,8 +35,24 @@ class TailscaleStatus:
         return self.tailscale_ips[0] if self.tailscale_ips else None
 
 
+@dataclass(frozen=True)
+class TailscaleSetupResult:
+    status: TailscaleStatus
+    steps: tuple[str, ...] = ()
+
+
 class CommandRunner(Protocol):
     def __call__(self, args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        ...
+
+
+class CommandExists(Protocol):
+    def __call__(self, command: str) -> str | None:
+        ...
+
+
+class Sleep(Protocol):
+    def __call__(self, seconds: float) -> None:
         ...
 
 
@@ -42,11 +60,15 @@ def default_runner(args: list[str], timeout: int) -> subprocess.CompletedProcess
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
 
 
-def get_status(runner: CommandRunner = default_runner, timeout: int = 5) -> TailscaleStatus:
-    if shutil.which("tailscale") is None:
+def get_status(
+    runner: CommandRunner = default_runner,
+    timeout: int = 5,
+    command_exists: CommandExists = shutil.which,
+) -> TailscaleStatus:
+    if command_exists("tailscale") is None:
         return TailscaleStatus(
             state=TailscaleState.CLI_MISSING,
-            message="Tailscale CLI was not found. Install Tailscale or use an explicit non-Tailscale endpoint.",
+            message="Tailscale CLI was not found. The bridge requires Tailscale by default.",
         )
 
     try:
@@ -66,6 +88,108 @@ def get_status(runner: CommandRunner = default_runner, timeout: int = 5) -> Tail
         return TailscaleStatus(state=TailscaleState.ERROR, message=f"Invalid tailscale JSON: {exc}")
 
     return parse_status(payload)
+
+
+def ensure_tailscale_ready(
+    runner: CommandRunner = default_runner,
+    command_exists: CommandExists = shutil.which,
+    system: str | None = None,
+    sleep: Sleep = time.sleep,
+    poll_attempts: int = 12,
+    poll_interval_seconds: float = 5,
+) -> TailscaleSetupResult:
+    steps: list[str] = ["Checking Tailscale status..."]
+    steps.append("Waiting for Tailscale to report a reachable IP...")
+    status = wait_until_running(
+        runner=runner,
+        command_exists=command_exists,
+        sleep=sleep,
+        attempts=poll_attempts,
+        interval_seconds=poll_interval_seconds,
+    )
+
+    if status.state == TailscaleState.CLI_MISSING:
+        install_command = build_install_command(system or platform.system(), command_exists)
+        if install_command is None:
+            return TailscaleSetupResult(status=_with_message(status, install_guidance(system or platform.system())), steps=tuple(steps))
+
+        steps.append(f"Tailscale CLI is missing. Installing with: {_format_command(install_command)}")
+        install_result = runner(install_command, 900)
+        if install_result.returncode != 0:
+            message = (install_result.stderr or install_result.stdout or "Tailscale installation failed.").strip()
+            return TailscaleSetupResult(
+                status=TailscaleStatus(state=TailscaleState.ERROR, message=f"{message}\n{install_guidance(system or platform.system())}"),
+                steps=tuple(steps),
+            )
+        status = get_status(runner=runner, command_exists=command_exists)
+
+    if status.state in {TailscaleState.NEEDS_LOGIN, TailscaleState.STOPPED}:
+        steps.append("Starting Tailscale login/connect flow with: tailscale up --qr")
+        steps.append("Scan the Tailscale login QR or open the login URL, then sign in on this machine.")
+        try:
+            up_result = runner(["tailscale", "up", "--qr"], 900)
+        except subprocess.TimeoutExpired:
+            return TailscaleSetupResult(status=_with_message(status, "Tailscale login timed out. Re-run the bridge and complete `tailscale up --qr`."), steps=tuple(steps))
+
+        if up_result.stdout.strip():
+            steps.append(up_result.stdout.strip())
+        if up_result.returncode != 0:
+            message = (up_result.stderr or up_result.stdout or "tailscale up --qr failed.").strip()
+            return TailscaleSetupResult(status=TailscaleStatus(state=TailscaleState.ERROR, message=message), steps=tuple(steps))
+        status = get_status(runner=runner, command_exists=command_exists)
+
+    if status.state == TailscaleState.RUNNING:
+        steps.append("Tailscale is running. Use the same Tailscale account/tailnet on Android before scanning the bridge QR.")
+
+    return TailscaleSetupResult(status=status, steps=tuple(steps))
+
+
+def wait_until_running(
+    runner: CommandRunner = default_runner,
+    command_exists: CommandExists = shutil.which,
+    sleep: Sleep = time.sleep,
+    attempts: int = 12,
+    interval_seconds: float = 5,
+) -> TailscaleStatus:
+    status = get_status(runner=runner, command_exists=command_exists)
+    for _ in range(max(0, attempts - 1)):
+        if status.state == TailscaleState.RUNNING:
+            return status
+        sleep(interval_seconds)
+        status = get_status(runner=runner, command_exists=command_exists)
+    return status
+
+
+def build_install_command(system: str, command_exists: CommandExists = shutil.which) -> list[str] | None:
+    normalized = system.lower()
+    if normalized == "windows" and command_exists("winget") is not None:
+        return [
+            "winget",
+            "install",
+            "--id",
+            "Tailscale.Tailscale",
+            "--exact",
+            "--source",
+            "winget",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+        ]
+    if normalized == "darwin" and command_exists("brew") is not None:
+        return ["brew", "install", "--cask", "tailscale"]
+    if normalized == "linux" and command_exists("curl") is not None and command_exists("sh") is not None:
+        return ["sh", "-c", "curl -fsSL https://tailscale.com/install.sh | sh"]
+    return None
+
+
+def install_guidance(system: str) -> str:
+    normalized = system.lower()
+    if normalized == "windows":
+        return "Install Tailscale with `winget install --id Tailscale.Tailscale --exact`, then re-run `python .\\bridge\\run.py start`."
+    if normalized == "darwin":
+        return "Install Tailscale with `brew install --cask tailscale`, then re-run `python bridge/run.py start`."
+    if normalized == "linux":
+        return "Install Tailscale with `curl -fsSL https://tailscale.com/install.sh | sh`, then re-run `python bridge/run.py start`."
+    return "Install Tailscale from https://tailscale.com/download, then re-run the bridge."
 
 
 def parse_status(payload: dict[str, Any]) -> TailscaleStatus:
@@ -133,3 +257,18 @@ def _extract_user(payload: dict[str, Any]) -> str | None:
 def _string_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
+
+def _with_message(status: TailscaleStatus, message: str) -> TailscaleStatus:
+    return TailscaleStatus(
+        state=status.state,
+        backend_state=status.backend_state,
+        tailscale_ips=status.tailscale_ips,
+        dns_name=status.dns_name,
+        auth_url=status.auth_url,
+        user=status.user,
+        message=message,
+    )
+
+
+def _format_command(command: list[str]) -> str:
+    return " ".join(command)

@@ -7,7 +7,7 @@ from .config import DEFAULT_PORT, default_config
 from .pairing import PairingStore, build_pairing_payload, encode_pairing_deep_link, render_terminal_qr
 from .runtime import BridgeRuntime
 from .stdlib_server import run_server
-from .tailscale import TailscaleState, build_websocket_endpoint, get_status
+from .tailscale import TailscaleState, TailscaleStatus, build_websocket_endpoint, ensure_tailscale_ready, get_status
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -17,10 +17,11 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     start_parser = subparsers.add_parser("start", help="Start the bridge server and print a pairing QR code")
-    start_parser.add_argument("--host", default="127.0.0.1", help="Host to bind. Defaults to localhost.")
+    start_parser.add_argument("--host", default=None, help="Host to bind. Defaults to the Tailscale IP in Tailscale mode.")
     start_parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to bind.")
     start_parser.add_argument("--workspace", help="Allowed workspace path. Defaults to the current directory.")
     start_parser.add_argument("--allow-non-tailscale", action="store_true", help="Allow localhost/manual endpoint when Tailscale is unavailable.")
+    start_parser.add_argument("--no-tailscale-setup", action="store_true", help="Skip automatic Tailscale install/login and only report current status.")
     start_parser.add_argument("--auto-approve-pairing", action="store_true", help="Skip local pairing confirmation. Use only for tests or trusted local demos.")
     start_parser.add_argument("--server", choices=("stdlib", "fastapi"), default="stdlib", help="Server backend. Defaults to the standard-library backend.")
 
@@ -59,18 +60,22 @@ def _print_tailscale_status() -> int:
 
 
 def _start(args: argparse.Namespace) -> int:
-    config = default_config(host=args.host, port=args.port, workspace=args.workspace)
-    status = get_status()
-    endpoint = build_websocket_endpoint(status, config.port)
+    status = get_status() if args.allow_non_tailscale or args.no_tailscale_setup else _prepare_tailscale()
+    endpoint = build_websocket_endpoint(status, args.port)
 
     if endpoint is None:
         if not args.allow_non_tailscale:
             print(f"Tailscale is not ready: {status.state}", file=sys.stderr)
             if status.message:
                 print(status.message, file=sys.stderr)
-            print("Use --allow-non-tailscale for localhost/manual testing.", file=sys.stderr)
+            print("Default bridge startup requires Tailscale. Use --allow-non-tailscale only for localhost/manual testing.", file=sys.stderr)
             return 1
-        endpoint = f"ws://{config.host}:{config.port}"
+        bind_host = args.host or "127.0.0.1"
+        endpoint = f"ws://{bind_host}:{args.port}"
+    else:
+        bind_host = args.host or status.tailscale_ips[0]
+
+    config = default_config(host=bind_host, port=args.port, workspace=args.workspace)
 
     pairing_store = PairingStore()
     token = pairing_store.create()
@@ -99,6 +104,13 @@ def _start(args: argparse.Namespace) -> int:
     else:
         run_server(runtime)
     return 0
+
+
+def _prepare_tailscale() -> TailscaleStatus:
+    setup = ensure_tailscale_ready()
+    for step in setup.steps:
+        print(step, flush=True)
+    return setup.status
 
 
 def _print_pairing(machine_name: str, endpoint: str, bridge_fingerprint: str, no_qr: bool) -> int:

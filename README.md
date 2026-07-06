@@ -25,10 +25,12 @@ This repository currently contains the initial project harness, design documenta
 ## Bridge MVP
 
 ```powershell
-python .\bridge\run.py start --allow-non-tailscale
+python .\bridge\run.py start
 ```
 
-The default bridge server uses only the Python standard library. For normal use, run with Tailscale connected so the generated QR code contains a private-network endpoint.
+The bridge requires Tailscale by default. On startup it checks for the Tailscale CLI, tries to install it automatically when a supported package manager is available, runs `tailscale up --qr` for login/connect, then prints an Android pairing link and compact CLI QR code that points at the machine's Tailscale endpoint. Sign in to the same Tailscale tailnet on Android before scanning.
+
+Use `--allow-non-tailscale` only for localhost/manual testing; QR pairing does not provide network connectivity by itself.
 
 ## Debug APK Release
 

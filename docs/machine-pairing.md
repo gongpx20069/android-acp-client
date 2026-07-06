@@ -13,8 +13,8 @@ The QR code does not create network connectivity by itself. It transfers endpoin
 ```text
 Start bridge on developer machine
   detect Tailscale
-  if unavailable, guide setup
-  if installed but not running/logged in, guide `tailscale up`
+  if unavailable, attempt automatic install and show platform guidance if install cannot run
+  if installed but not running/logged in, run `tailscale up --qr`
   when reachable, start bridge listener
   create one-time pairing token
   show Android pairing QR code
@@ -43,7 +43,8 @@ The bridge cannot find the `tailscale` CLI.
 Bridge behavior:
 
 - Continue only if the user explicitly chooses a non-Tailscale transport.
-- Show installation guidance for the current OS.
+- Try to install Tailscale automatically when a supported installer is available: `winget` on Windows, Homebrew on macOS, or the official Tailscale install script on Linux.
+- Show installation guidance for the current OS when automatic installation cannot run or fails.
 - Do not generate a Tailscale endpoint.
 
 ### `tailscale_needs_login`
@@ -52,7 +53,7 @@ Tailscale is installed but not authenticated.
 
 Bridge behavior:
 
-- Run or instruct the user to run `tailscale up`.
+- Run `tailscale up --qr` by default.
 - If supported, use `tailscale up --qr` to show a Tailscale login QR code for the developer machine.
 - Poll `tailscale status --json` until the backend state becomes running or the user cancels.
 
@@ -64,7 +65,7 @@ Tailscale is installed and authenticated but disconnected.
 
 Bridge behavior:
 
-- Run or instruct the user to run `tailscale up`.
+- Run `tailscale up --qr` by default.
 - Wait for a running state before generating a Tailscale endpoint.
 
 ### `tailscale_running`
@@ -109,6 +110,8 @@ Expected checks:
 - Optional: MagicDNS name is available.
 
 `tailscale up` connects the device and authenticates if needed. The Tailscale CLI supports JSON output for `up`, and `tailscale up --qr` can generate a QR code for the Tailscale web login URL.
+
+The bridge startup command requires Tailscale by default. `--allow-non-tailscale` is reserved for localhost/manual testing and should not be used for normal Android pairing.
 
 ## Android Pairing QR Payload
 

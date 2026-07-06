@@ -38,9 +38,10 @@ class PairingPayload:
     pairing_token: str
     expires_at: str
     bridge_fingerprint: str
+    headers: dict[str, str]
 
     def to_wire(self) -> dict[str, Any]:
-        return {
+        payload = {
             "version": self.version,
             "type": self.type,
             "machineName": self.machine_name,
@@ -50,6 +51,9 @@ class PairingPayload:
             "expiresAt": self.expires_at,
             "bridgeFingerprint": self.bridge_fingerprint,
         }
+        if self.headers:
+            payload["headers"] = self.headers
+        return payload
 
 
 class PairingStore:
@@ -85,6 +89,7 @@ def build_pairing_payload(
     endpoint: str,
     token: PairingToken,
     bridge_fingerprint: str,
+    headers: dict[str, str] | None = None,
 ) -> PairingPayload:
     return PairingPayload(
         version=1,
@@ -95,6 +100,7 @@ def build_pairing_payload(
         pairing_token=token.pairing_token,
         expires_at=token.expires_at.isoformat().replace("+00:00", "Z"),
         bridge_fingerprint=bridge_fingerprint,
+        headers=headers or {},
     )
 
 

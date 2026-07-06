@@ -41,6 +41,7 @@ class MachineStore(context: Context) {
             .put("endpoint", endpoint)
             .put("deviceToken", deviceToken)
             .put("bridgeFingerprint", bridgeFingerprint)
+            .put("connectionHeaders", JSONObject(connectionHeaders))
             .put("bridgeVersion", bridgeVersion)
             .put("connectionState", connectionState.name)
             .put("workspaces", JSONArray(workspaces.map { it.toJson() }))
@@ -54,6 +55,7 @@ class MachineStore(context: Context) {
             endpoint = getString("endpoint"),
             deviceToken = getString("deviceToken"),
             bridgeFingerprint = getString("bridgeFingerprint"),
+            connectionHeaders = optJSONObject("connectionHeaders").toStringMap(),
             bridgeVersion = optString("bridgeVersion").ifBlank { null },
             connectionState = runCatching { ConnectionState.valueOf(optString("connectionState")) }.getOrDefault(ConnectionState.Unknown),
             workspaces = optJSONArray("workspaces").orEmpty().mapJsonObjects { it.toWorkspace() },
@@ -93,6 +95,11 @@ class MachineStore(context: Context) {
 
     private fun JSONArray?.orEmpty(): JSONArray = this ?: JSONArray()
 
+    private fun JSONObject?.toStringMap(): Map<String, String> {
+        if (this == null) return emptyMap()
+        return keys().asSequence().associateWith { key -> getString(key) }
+    }
+
     private inline fun <T> JSONArray.mapJsonObjects(transform: (JSONObject) -> T): List<T> {
         return List(length()) { index -> transform(getJSONObject(index)) }
     }
@@ -101,4 +108,3 @@ class MachineStore(context: Context) {
         const val KEY_MACHINES = "machines"
     }
 }
-

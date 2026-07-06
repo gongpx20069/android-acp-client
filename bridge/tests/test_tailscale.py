@@ -10,6 +10,7 @@ from android_acp_bridge.tailscale import (
     build_websocket_endpoint,
     ensure_tailscale_ready,
     get_status,
+    install_failure_guidance,
     install_guidance,
     parse_status,
 )
@@ -64,6 +65,13 @@ class TailscaleTests(unittest.TestCase):
         self.assertIn("brew install", install_guidance("Darwin"))
         self.assertIn("tailscale.com/install.sh", install_guidance("Linux"))
 
+    def test_windows_policy_blocked_install_has_specific_guidance(self) -> None:
+        guidance = install_failure_guidance("Windows", 1625, "组织策略正在阻止安装。请与管理员联系。")
+
+        self.assertIn("organization policy", guidance)
+        self.assertIn("company software portal", guidance)
+        self.assertIn("will not bypass", guidance)
+
     def test_ensure_ready_installs_then_runs_tailscale_up(self) -> None:
         state = {"installed": False, "running": False}
         commands: list[list[str]] = []
@@ -99,6 +107,24 @@ class TailscaleTests(unittest.TestCase):
         self.assertIn(["tailscale", "up", "--qr"], commands)
         self.assertTrue(any("same Tailscale account" in step for step in result.steps))
         self.assertTrue(any("Waiting for Tailscale" in step for step in result.steps))
+
+    def test_ensure_ready_reports_policy_blocked_winget_install(self) -> None:
+        commands: list[list[str]] = []
+
+        def command_exists(command: str) -> str | None:
+            return "winget" if command == "winget" else None
+
+        def runner(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+            commands.append(args)
+            if args[0] == "winget":
+                return subprocess.CompletedProcess(args, 1625, "", "组织策略正在阻止安装。请与管理员联系。")
+            raise AssertionError(f"unexpected command: {args}")
+
+        result = ensure_tailscale_ready(runner=runner, command_exists=command_exists, system="Windows")
+
+        self.assertEqual(result.status.state, TailscaleState.ERROR)
+        self.assertIn("organization policy", result.status.message or "")
+        self.assertIn(["winget", "install", "--id", "Tailscale.Tailscale", "--exact", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements"], commands)
 
 
 if __name__ == "__main__":

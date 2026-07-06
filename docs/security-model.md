@@ -38,10 +38,11 @@ The Android MVP permits cleartext HTTP/WebSocket traffic so it can connect to a 
 - Store Android tokens in secure platform storage.
 - Never commit tokens or local endpoints containing secrets.
 - The bridge should support token rotation.
+- Relay access headers such as `X-Tunnel-Authorization` are credentials. Store them only in secure platform storage, scope them to a single paired machine, and never log them.
 
 ## Pairing QR Security
 
-The QR code may include endpoint metadata, pairing ID, a short-lived pairing token, expiry, and bridge fingerprint. It must not include long-lived credentials or third-party tokens.
+The QR code may include endpoint metadata, pairing ID, a short-lived pairing token, expiry, bridge fingerprint, and short-lived relay access headers needed to reach the bridge. It must not include long-lived credentials or broad third-party tokens.
 
 Recommended QR properties:
 
@@ -50,6 +51,7 @@ Recommended QR properties:
 - Bound to the bridge instance and machine fingerprint.
 - Requires local confirmation before issuing a device token.
 - Safe to regenerate without invalidating already paired devices.
+- Relay access headers in the QR should be short-lived and scoped to the single tunnel or machine endpoint.
 
 ## Approval Policy
 

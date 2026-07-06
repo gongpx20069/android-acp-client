@@ -35,6 +35,77 @@ class PairingLinkParserTest {
     }
 
     @Test
+    fun parsesDevTunnelAuthorizationHeader() {
+        val link = linkFor(
+            """
+            {
+              "version": 1,
+              "type": "acp-bridge-pairing",
+              "machineName": "devbox",
+              "endpoint": "wss://example-4317.devtunnels.ms",
+              "pairingId": "pair_123",
+              "pairingToken": "token",
+              "expiresAt": "2026-07-05T14:00:00Z",
+              "bridgeFingerprint": "sha256:test",
+              "headers": {
+                "X-Tunnel-Authorization": "tunnel devtunnel-token"
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val payload = parser.parse(link).getOrThrow()
+
+        assertEquals("tunnel devtunnel-token", payload.headers["X-Tunnel-Authorization"])
+    }
+
+    @Test
+    fun rejectsUnsupportedConnectionHeader() {
+        val link = linkFor(
+            """
+            {
+              "version": 1,
+              "type": "acp-bridge-pairing",
+              "machineName": "devbox",
+              "endpoint": "wss://example-4317.devtunnels.ms",
+              "pairingId": "pair_123",
+              "pairingToken": "token",
+              "expiresAt": "2026-07-05T14:00:00Z",
+              "bridgeFingerprint": "sha256:test",
+              "headers": {
+                "Authorization": "Bearer token"
+              }
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(parser.parse(link).isFailure)
+    }
+
+    @Test
+    fun rejectsInvalidDevTunnelAuthorizationHeader() {
+        val link = linkFor(
+            """
+            {
+              "version": 1,
+              "type": "acp-bridge-pairing",
+              "machineName": "devbox",
+              "endpoint": "wss://example-4317.devtunnels.ms",
+              "pairingId": "pair_123",
+              "pairingToken": "token",
+              "expiresAt": "2026-07-05T14:00:00Z",
+              "bridgeFingerprint": "sha256:test",
+              "headers": {
+                "X-Tunnel-Authorization": "devtunnel-token"
+              }
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(parser.parse(link).isFailure)
+    }
+
+    @Test
     fun rejectsUnsupportedEndpointScheme() {
         val link = linkFor(
             """
@@ -61,4 +132,3 @@ class PairingLinkParserTest {
         return "acpclient://pair?data=${URLEncoder.encode(encoded, StandardCharsets.UTF_8.name())}"
     }
 }
-

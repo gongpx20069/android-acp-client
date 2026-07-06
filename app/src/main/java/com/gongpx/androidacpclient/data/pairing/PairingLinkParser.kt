@@ -30,6 +30,7 @@ class PairingLinkParser {
             pairingToken = json.getString("pairingToken"),
             expiresAt = json.getString("expiresAt"),
             bridgeFingerprint = json.getString("bridgeFingerprint"),
+            headers = json.optJSONObject("headers").toStringMap(),
         )
 
         require(payload.version == 1) { "Unsupported pairing payload version: ${payload.version}." }
@@ -39,8 +40,21 @@ class PairingLinkParser {
         }
         require(payload.pairingToken.isNotBlank()) { "Pairing token is empty." }
         require(payload.bridgeFingerprint.startsWith("sha256:")) { "Bridge fingerprint is missing." }
+        payload.headers.forEach { (name, value) ->
+            require(name == "X-Tunnel-Authorization") {
+                "Unsupported pairing connection header: $name."
+            }
+            require(value.startsWith("tunnel ") && value.length > "tunnel ".length) {
+                "Invalid X-Tunnel-Authorization header."
+            }
+        }
 
         payload
+    }
+
+    private fun JSONObject?.toStringMap(): Map<String, String> {
+        if (this == null) return emptyMap()
+        return keys().asSequence().associateWith { key -> getString(key) }
     }
 
     private fun URI.queryParameters(): Map<String, String> {

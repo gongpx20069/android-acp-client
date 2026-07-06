@@ -19,6 +19,8 @@ Default Tailscale setup flow:
 
 The Android device must also be signed in to the same Tailscale tailnet. Use `--allow-non-tailscale` only for localhost/manual testing.
 
+If Windows reports `组织策略正在阻止安装` / installer exit code `1625`, your organization blocks `winget` installs. The bridge will not bypass that policy; install Tailscale from your company software portal, ask an administrator to approve `Tailscale.Tailscale`, or use the official installer from <https://tailscale.com/download/windows>, then re-run `python .\run.py start`.
+
 `run.py` creates `bridge\.venv` on first use, installs `requirements.txt`, and forwards every argument to the bridge CLI. Package installation is still supported when you want the command on your PATH:
 
 ```powershell
@@ -62,6 +64,14 @@ python .\run.py pairing
 ```
 
 `start` runs automatic Tailscale setup by default. Use `--no-tailscale-setup` to only inspect current Tailscale status without installing or logging in.
+
+For authenticated relay transports such as private Microsoft Dev Tunnels, include the required connection header in the pairing QR/link:
+
+```powershell
+python .\run.py pairing --endpoint wss://example-4317.devtunnels.ms --connection-header "X-Tunnel-Authorization=tunnel <connect-token>"
+```
+
+Android stores that header per machine and sends it on future bridge requests for that machine.
 
 ## Optional Extras
 

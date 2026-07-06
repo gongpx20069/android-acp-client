@@ -47,6 +47,8 @@ show Android pairing QR code
 
 See `machine-pairing.md` for the detailed state machine and QR payload.
 
+Pairing payloads may include optional per-machine connection headers for authenticated relay transports. Android stores these headers with the machine and sends them on every bridge request for that machine. The MVP allowlist is limited to `X-Tunnel-Authorization` for Microsoft Dev Tunnels connect-token access.
+
 ## Bridge Discovery APIs
 
 ### Health

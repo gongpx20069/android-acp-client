@@ -9,6 +9,7 @@ data class PairingPayload(
     val pairingToken: String,
     val expiresAt: String,
     val bridgeFingerprint: String,
+    val headers: Map<String, String> = emptyMap(),
 )
 
 data class Machine(
@@ -17,6 +18,7 @@ data class Machine(
     val endpoint: String,
     val deviceToken: String,
     val bridgeFingerprint: String,
+    val connectionHeaders: Map<String, String> = emptyMap(),
     val bridgeVersion: String? = null,
     val connectionState: ConnectionState = ConnectionState.Unknown,
     val workspaces: List<Workspace> = emptyList(),
@@ -40,4 +42,3 @@ enum class ConnectionState {
     Online,
     Offline,
 }
-

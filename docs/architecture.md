@@ -44,6 +44,7 @@ The Python bridge is optimized for MVP speed and cross-platform development. The
 Planned Android modules:
 
 - `app`: Android entry point and navigation.
+- CameraX and ML Kit Barcode Scanning in `app` for QR-based machine pairing.
 - `core:model`: shared domain models such as Chat, Machine, Workspace, Approval.
 - `core:acp`: ACP JSON-RPC models and protocol handling.
 - `core:bridge`: bridge API client and connection manager.

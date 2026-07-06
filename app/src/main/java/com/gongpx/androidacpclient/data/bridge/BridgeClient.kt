@@ -18,6 +18,7 @@ class BridgeClient {
             val response = postJson(
                 endpoint = payload.endpoint,
                 path = "/pairing/redeem",
+                headers = payload.headers,
                 body = JSONObject()
                     .put("pairingId", payload.pairingId)
                     .put("pairingToken", payload.pairingToken)
@@ -36,15 +37,16 @@ class BridgeClient {
                 endpoint = payload.endpoint,
                 deviceToken = response.getString("deviceToken"),
                 bridgeFingerprint = response.getString("bridgeFingerprint"),
+                connectionHeaders = payload.headers,
             )
         }
     }
 
     suspend fun fetchMachineDetails(machine: Machine): Result<Machine> = withContext(Dispatchers.IO) {
         runCatching {
-            val health = getJson(machine.endpoint, "/health")
-            val agents = getJson(machine.endpoint, "/agents").getJSONArray("agents").toAgents()
-            val workspaces = getJson(machine.endpoint, "/workspaces").getJSONArray("workspaces").toWorkspaces()
+            val health = getJson(machine.endpoint, "/health", machine.connectionHeaders)
+            val agents = getJson(machine.endpoint, "/agents", machine.connectionHeaders).getJSONArray("agents").toAgents()
+            val workspaces = getJson(machine.endpoint, "/workspaces", machine.connectionHeaders).getJSONArray("workspaces").toWorkspaces()
 
             machine.copy(
                 bridgeVersion = health.optString("bridgeVersion").ifBlank { null },
@@ -55,25 +57,33 @@ class BridgeClient {
         }
     }
 
-    private fun getJson(endpoint: String, path: String): JSONObject {
+    private fun getJson(endpoint: String, path: String, headers: Map<String, String>): JSONObject {
         val connection = URL(toHttpBase(endpoint) + path).openConnection() as HttpURLConnection
         connection.requestMethod = "GET"
         connection.connectTimeout = TIMEOUT_MS
         connection.readTimeout = TIMEOUT_MS
+        connection.setConnectionHeaders(headers)
         return connection.useJsonResponse()
     }
 
-    private fun postJson(endpoint: String, path: String, body: JSONObject): JSONObject {
+    private fun postJson(endpoint: String, path: String, headers: Map<String, String>, body: JSONObject): JSONObject {
         val connection = URL(toHttpBase(endpoint) + path).openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
         connection.connectTimeout = TIMEOUT_MS
         connection.readTimeout = TIMEOUT_MS
         connection.doOutput = true
         connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        connection.setConnectionHeaders(headers)
         connection.outputStream.use { stream ->
             stream.write(body.toString().toByteArray(Charsets.UTF_8))
         }
         return connection.useJsonResponse()
+    }
+
+    private fun HttpURLConnection.setConnectionHeaders(headers: Map<String, String>) {
+        headers.forEach { (name, value) ->
+            setRequestProperty(name, value)
+        }
     }
 
     private fun HttpURLConnection.useJsonResponse(): JSONObject {

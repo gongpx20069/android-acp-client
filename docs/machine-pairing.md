@@ -45,6 +45,7 @@ Bridge behavior:
 - Continue only if the user explicitly chooses a non-Tailscale transport.
 - Try to install Tailscale automatically when a supported installer is available: `winget` on Windows, Homebrew on macOS, or the official Tailscale install script on Linux.
 - Show installation guidance for the current OS when automatic installation cannot run or fails.
+- If Windows blocks `winget` with organization policy / exit code 1625, do not bypass policy; instruct the user to install through their company software portal, ask an administrator to approve Tailscale, or use the official Windows installer.
 - Do not generate a Tailscale endpoint.
 
 ### `tailscale_needs_login`
@@ -132,7 +133,10 @@ Decoded payload:
   "pairingId": "pair_01HZZ...",
   "pairingToken": "short-lived-one-time-token",
   "expiresAt": "2026-07-05T14:00:00Z",
-  "bridgeFingerprint": "sha256:..."
+  "bridgeFingerprint": "sha256:...",
+  "headers": {
+    "X-Tunnel-Authorization": "tunnel short-lived-dev-tunnel-connect-token"
+  }
 }
 ```
 
@@ -140,9 +144,11 @@ Rules:
 
 - `pairingToken` must be one-time use.
 - `pairingToken` should expire within 2-5 minutes.
-- The payload must not contain GitHub tokens, SSH keys, OAuth tokens, or API keys.
+- The payload must not contain long-lived GitHub tokens, SSH keys, OAuth tokens, or API keys. Short-lived relay access headers such as Dev Tunnels connect tokens are allowed only when required to reach the bridge.
 - `endpoint` should prefer a Tailscale or private-network address.
 - `bridgeFingerprint` should be saved by Android and checked on future connections.
+- `headers` is optional per-machine connection metadata. Android must persist it with the paired machine and send it on every bridge HTTP/WebSocket request for that machine.
+- Only relay-required headers should be included. The MVP supports `X-Tunnel-Authorization: tunnel <token>` for Microsoft Dev Tunnels private access.
 
 ## Pairing Handshake
 

@@ -24,6 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     start_parser.add_argument("--no-tailscale-setup", action="store_true", help="Skip automatic Tailscale install/login and only report current status.")
     start_parser.add_argument("--auto-approve-pairing", action="store_true", help="Skip local pairing confirmation. Use only for tests or trusted local demos.")
     start_parser.add_argument("--server", choices=("stdlib", "fastapi"), default="stdlib", help="Server backend. Defaults to the standard-library backend.")
+    start_parser.add_argument("--connection-header", action="append", default=[], metavar="NAME=VALUE", help="Header Android must send when connecting through a relay, e.g. X-Tunnel-Authorization='tunnel <token>'.")
 
     subparsers.add_parser("tailscale-status", help="Print the detected Tailscale status")
 
@@ -31,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     pairing_parser.add_argument("--endpoint", required=True)
     pairing_parser.add_argument("--machine-name", default=None)
     pairing_parser.add_argument("--no-qr", action="store_true")
+    pairing_parser.add_argument("--connection-header", action="append", default=[], metavar="NAME=VALUE", help="Header Android must send when connecting through a relay.")
 
     args = parser.parse_args(argv)
 
@@ -39,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "pairing":
         config = default_config()
         machine_name = args.machine_name or config.machine_name
-        return _print_pairing(machine_name, args.endpoint, config.bridge_fingerprint, args.no_qr)
+        return _print_pairing(machine_name, args.endpoint, config.bridge_fingerprint, args.no_qr, _parse_connection_headers(args.connection_header))
     if args.command == "start":
         return _start(args)
 
@@ -84,6 +86,7 @@ def _start(args: argparse.Namespace) -> int:
         endpoint=endpoint,
         token=token,
         bridge_fingerprint=config.bridge_fingerprint,
+        headers=_parse_connection_headers(args.connection_header),
     )
     deep_link = encode_pairing_deep_link(payload)
 
@@ -113,13 +116,14 @@ def _prepare_tailscale() -> TailscaleStatus:
     return setup.status
 
 
-def _print_pairing(machine_name: str, endpoint: str, bridge_fingerprint: str, no_qr: bool) -> int:
+def _print_pairing(machine_name: str, endpoint: str, bridge_fingerprint: str, no_qr: bool, headers: dict[str, str]) -> int:
     token = PairingStore().create()
     payload = build_pairing_payload(
         machine_name=machine_name,
         endpoint=endpoint,
         token=token,
         bridge_fingerprint=bridge_fingerprint,
+        headers=headers,
     )
     deep_link = encode_pairing_deep_link(payload)
     print(deep_link)
@@ -137,6 +141,19 @@ def _run_fastapi(runtime: BridgeRuntime) -> None:
         raise SystemExit("FastAPI server backend requires: python -m pip install -r requirements-fastapi.txt") from exc
 
     uvicorn.run(create_app(runtime), host=runtime.config.host, port=runtime.config.port)
+
+
+def _parse_connection_headers(values: list[str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for value in values:
+        name, separator, header_value = value.partition("=")
+        if not separator or not name.strip() or not header_value.strip():
+            raise SystemExit(f"Invalid --connection-header value: {value}. Expected NAME=VALUE.")
+        header_name = name.strip()
+        if header_name.lower() != "x-tunnel-authorization":
+            raise SystemExit("Only X-Tunnel-Authorization is currently supported as a pairing connection header.")
+        headers[header_name] = header_value.strip()
+    return headers
 
 
 def _configure_stdout() -> None:

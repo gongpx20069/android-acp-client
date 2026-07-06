@@ -99,26 +99,23 @@ def ensure_tailscale_ready(
     poll_interval_seconds: float = 5,
 ) -> TailscaleSetupResult:
     steps: list[str] = ["Checking Tailscale status..."]
-    steps.append("Waiting for Tailscale to report a reachable IP...")
-    status = wait_until_running(
-        runner=runner,
-        command_exists=command_exists,
-        sleep=sleep,
-        attempts=poll_attempts,
-        interval_seconds=poll_interval_seconds,
-    )
+    current_system = system or platform.system()
+    status = get_status(runner=runner, command_exists=command_exists)
 
     if status.state == TailscaleState.CLI_MISSING:
-        install_command = build_install_command(system or platform.system(), command_exists)
+        install_command = build_install_command(current_system, command_exists)
         if install_command is None:
-            return TailscaleSetupResult(status=_with_message(status, install_guidance(system or platform.system())), steps=tuple(steps))
+            return TailscaleSetupResult(status=_with_message(status, install_guidance(current_system)), steps=tuple(steps))
 
         steps.append(f"Tailscale CLI is missing. Installing with: {_format_command(install_command)}")
         install_result = runner(install_command, 900)
         if install_result.returncode != 0:
             message = (install_result.stderr or install_result.stdout or "Tailscale installation failed.").strip()
             return TailscaleSetupResult(
-                status=TailscaleStatus(state=TailscaleState.ERROR, message=f"{message}\n{install_guidance(system or platform.system())}"),
+                status=TailscaleStatus(
+                    state=TailscaleState.ERROR,
+                    message=f"{message}\n{install_failure_guidance(current_system, install_result.returncode, message)}",
+                ),
                 steps=tuple(steps),
             )
         status = get_status(runner=runner, command_exists=command_exists)
@@ -136,7 +133,14 @@ def ensure_tailscale_ready(
         if up_result.returncode != 0:
             message = (up_result.stderr or up_result.stdout or "tailscale up --qr failed.").strip()
             return TailscaleSetupResult(status=TailscaleStatus(state=TailscaleState.ERROR, message=message), steps=tuple(steps))
-        status = get_status(runner=runner, command_exists=command_exists)
+        steps.append("Waiting for Tailscale to report a reachable IP...")
+        status = wait_until_running(
+            runner=runner,
+            command_exists=command_exists,
+            sleep=sleep,
+            attempts=poll_attempts,
+            interval_seconds=poll_interval_seconds,
+        )
 
     if status.state == TailscaleState.RUNNING:
         steps.append("Tailscale is running. Use the same Tailscale account/tailnet on Android before scanning the bridge QR.")
@@ -190,6 +194,18 @@ def install_guidance(system: str) -> str:
     if normalized == "linux":
         return "Install Tailscale with `curl -fsSL https://tailscale.com/install.sh | sh`, then re-run `python bridge/run.py start`."
     return "Install Tailscale from https://tailscale.com/download, then re-run the bridge."
+
+
+def install_failure_guidance(system: str, returncode: int, detail: str) -> str:
+    normalized = system.lower()
+    policy_blocked = returncode == 1625 or "policy" in detail.lower() or "组织策略" in detail
+    if normalized == "windows" and policy_blocked:
+        return (
+            "Windows organization policy blocked the winget installer. The bridge will not bypass device policy. "
+            "Install Tailscale from your company software portal, ask an administrator to approve Tailscale.Tailscale, "
+            "or use the official installer from https://tailscale.com/download/windows, then re-run `python .\\bridge\\run.py start`."
+        )
+    return install_guidance(system)
 
 
 def parse_status(payload: dict[str, Any]) -> TailscaleStatus:

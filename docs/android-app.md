@@ -8,6 +8,7 @@ The initial Android app focuses on machine onboarding:
 
 - Compose application shell.
 - Bottom tabs: Chats, Approvals, Machines, Settings.
+- In-app QR scanning with CameraX and ML Kit Barcode Scanning.
 - `acpclient://pair?data=...` deep-link handling.
 - Manual pairing-link paste fallback.
 - Pairing token redemption through the bridge.
@@ -22,14 +23,16 @@ The bridge prints both an Android pairing link and a compact CLI QR code on ever
 
 The Android app supports two onboarding paths:
 
-1. Scan the QR code with Android Camera or another QR scanner. The scanner opens the `acpclient://pair` deep link in the app.
+1. Scan the QR code in the Machines tab with the built-in camera scanner.
 2. Paste the `acpclient://pair?data=...` link into the Machines tab.
 
-In-app camera scanning is a later enhancement. The current MVP avoids camera permissions and scanner dependencies while still supporting QR-driven deep-link pairing.
+The scanner only accepts `acpclient://pair` QR payloads. Camera permission is requested when the scanner opens.
 
 ## Storage
 
 Paired machine records include endpoint, bridge fingerprint, and device token. These are stored through encrypted shared preferences. Do not replace this with plain shared preferences unless a separate secure-storage design is documented first.
+
+Paired machine records may also include per-machine connection headers, such as `X-Tunnel-Authorization` for a private Microsoft Dev Tunnel. Treat these headers like short-lived credentials: store them only in the encrypted machine record, send them only to that machine endpoint, and do not log them.
 
 ## Network Contract
 
@@ -46,6 +49,8 @@ After pairing, the app calls:
 - `GET /health`
 - `GET /agents`
 - `GET /workspaces`
+
+If the pairing payload includes `headers`, the app sends those headers with all bridge HTTP calls for that machine.
 
 Future chat support will use:
 

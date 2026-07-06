@@ -5,6 +5,7 @@ import json
 import unittest
 from datetime import timedelta
 
+from android_acp_bridge.main import _parse_connection_headers
 from android_acp_bridge.pairing import PairingStore, build_pairing_payload, encode_pairing_deep_link, render_terminal_qr
 
 
@@ -40,6 +41,34 @@ class PairingTests(unittest.TestCase):
         self.assertEqual(body["type"], "acp-bridge-pairing")
         self.assertEqual(body["machineName"], "devbox")
         self.assertEqual(body["endpoint"], "ws://100.64.0.10:4317")
+
+    def test_deep_link_can_include_connection_headers(self) -> None:
+        store = PairingStore()
+        token = store.create()
+        payload = build_pairing_payload(
+            machine_name="devbox",
+            endpoint="wss://example.devtunnels.ms",
+            token=token,
+            bridge_fingerprint="sha256:test",
+            headers={"X-Tunnel-Authorization": "tunnel token"},
+        )
+
+        link = encode_pairing_deep_link(payload)
+        encoded = link.split("data=", 1)[1]
+        decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        body = json.loads(decoded)
+
+        self.assertEqual(body["headers"], {"X-Tunnel-Authorization": "tunnel token"})
+
+    def test_parse_connection_headers_accepts_dev_tunnel_authorization(self) -> None:
+        self.assertEqual(
+            _parse_connection_headers(["X-Tunnel-Authorization=tunnel token"]),
+            {"X-Tunnel-Authorization": "tunnel token"},
+        )
+
+    def test_parse_connection_headers_rejects_other_headers(self) -> None:
+        with self.assertRaises(SystemExit):
+            _parse_connection_headers(["Authorization=Bearer token"])
 
     def test_terminal_qr_is_rendered(self) -> None:
         qr = render_terminal_qr("acpclient://pair?data=test")

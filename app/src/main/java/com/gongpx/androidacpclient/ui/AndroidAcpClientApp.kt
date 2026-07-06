@@ -252,27 +252,19 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                     upsertChat(chat.withMessage(MessageRole.System, "Machine is not available."))
                                 } else {
                                     val updated = chat.withMessage(MessageRole.User, message)
-                                    val withActivity = updated.withActivity(
+                                    val sending = updated.withActivity(
                                         title = "Sending prompt",
-                                        summary = "Calling bridge WebSocket",
+                                        summary = "Opening bridge WebSocket",
                                         details = "type=chat.prompt\nchatId=${chat.id}\nworkspace=${chat.workspacePath}",
                                     )
-                                    upsertChat(withActivity)
+                                    upsertChat(sending)
                                     scope.launch {
                                         bridgeClient.sendChatPrompt(machine, chat.id, message)
-                                            .onSuccess { response ->
-                                                upsertChat(
-                                                    withActivity
-                                                        .withActivity(
-                                                            title = "Bridge response",
-                                                            summary = "WebSocket response received",
-                                                            details = response,
-                                                        )
-                                                        .withMessage(MessageRole.Agent, "Bridge acknowledged the prompt. ACP agent execution will attach here next."),
-                                                )
+                                            .onSuccess { events ->
+                                                upsertChat(sending.copy(messages = sending.messages + events))
                                             }
                                             .onFailure {
-                                                upsertChat(withActivity.withMessage(MessageRole.System, "Bridge WebSocket failed: ${it.message}"))
+                                                upsertChat(sending.withMessage(MessageRole.System, "Bridge WebSocket failed: ${it.message}"))
                                             }
                                     }
                                 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -71,6 +72,17 @@ class BridgeRuntime:
     def is_device_token_valid(self, token: str) -> bool:
         return token in self.device_tokens
 
+    def websocket_responses(self, payload: Any) -> list[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return [{"type": "bridge.echo", "payload": payload}, {"type": "bridge.done"}]
+
+        message_type = payload.get("type")
+        if message_type == "chat.prompt":
+            return self._chat_prompt_updates(payload)
+        if message_type == "approval.decide":
+            return self._approval_decision_updates(payload)
+        return [{"type": "bridge.echo", "payload": payload}, {"type": "bridge.done"}]
+
     def confirm_pairing(self, device: DeviceInfo) -> bool:
         if not self.require_local_pairing_confirmation:
             return True
@@ -81,6 +93,72 @@ class BridgeRuntime:
         except EOFError:
             return False
         return answer.strip().lower() in {"y", "yes"}
+
+    def _chat_prompt_updates(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
+        prompt = _string_or_default(payload.get("content"), "")
+        tool_call_id = "tool_" + secrets.token_urlsafe(8)
+        return [
+            {
+                "type": "session/update",
+                "chatId": chat_id,
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": tool_call_id,
+                    "title": "Dispatch prompt",
+                    "kind": "bridge.websocket",
+                    "status": "started",
+                    "content": {
+                        "prompt": prompt,
+                        "timestampMillis": int(time.time() * 1000),
+                    },
+                },
+            },
+            {
+                "type": "session/update",
+                "chatId": chat_id,
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": tool_call_id,
+                    "title": "Dispatch prompt",
+                    "kind": "bridge.websocket",
+                    "status": "completed",
+                    "content": {
+                        "result": "Prompt delivered to the bridge. ACP agent runtime is not attached yet.",
+                    },
+                },
+            },
+            {
+                "type": "session/update",
+                "chatId": chat_id,
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {
+                        "type": "text",
+                        "text": "Bridge acknowledged the prompt. ACP agent execution will stream here when attached.",
+                    },
+                },
+            },
+            {"type": "bridge.done", "chatId": chat_id},
+        ]
+
+    def _approval_decision_updates(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        approval_id = _string_or_default(payload.get("approvalId"), "unknown-approval")
+        decision = _string_or_default(payload.get("decision"), "unknown")
+        return [
+            {
+                "type": "session/update",
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": approval_id,
+                    "title": "Approval decision",
+                    "kind": "approval",
+                    "status": decision,
+                    "content": {"decision": decision},
+                },
+            },
+            {"type": "bridge.done"},
+        ]
 
 
 def parse_device_info(value: Any) -> DeviceInfo | None:
@@ -99,3 +177,6 @@ def parse_device_info(value: Any) -> DeviceInfo | None:
 
     return DeviceInfo(name=name.strip(), platform=platform.strip(), app_version=app_version.strip())
 
+
+def _string_or_default(value: Any, default: str) -> str:
+    return value if isinstance(value, str) else default

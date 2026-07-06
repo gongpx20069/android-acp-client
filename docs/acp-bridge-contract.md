@@ -172,6 +172,57 @@ Bridge behavior:
 
 ### Send Prompt
 
+Android sends a chat prompt through the bridge WebSocket:
+
+```json
+{
+  "type": "chat.prompt",
+  "chatId": "chat_123",
+  "content": "Run the tests"
+}
+```
+
+The bridge streams ACP-style updates:
+
+```json
+{
+  "type": "session/update",
+  "chatId": "chat_123",
+  "update": {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "tool_abc",
+    "title": "Dispatch prompt",
+    "kind": "bridge.websocket",
+    "status": "started",
+    "content": {
+      "prompt": "Run the tests"
+    }
+  }
+}
+```
+
+```json
+{
+  "type": "session/update",
+  "chatId": "chat_123",
+  "update": {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "tool_abc",
+    "status": "completed",
+    "content": {
+      "result": "Prompt delivered to the bridge."
+    }
+  }
+}
+```
+
+```json
+{
+  "type": "bridge.done",
+  "chatId": "chat_123"
+}
+```
+
 Android sends:
 
 ```json

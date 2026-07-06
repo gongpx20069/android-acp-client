@@ -88,6 +88,34 @@ class RuntimeTests(unittest.TestCase):
         )
         self.assertIsNone(parse_device_info({"name": "Pixel", "platform": "android"}))
 
+    def test_chat_prompt_websocket_responses_include_tool_call_updates(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+        )
+
+        responses = runtime.websocket_responses({"type": "chat.prompt", "chatId": "chat_1", "content": "hello"})
+
+        self.assertEqual(responses[0]["type"], "session/update")
+        self.assertEqual(responses[0]["update"]["sessionUpdate"], "tool_call")
+        self.assertEqual(responses[1]["update"]["sessionUpdate"], "tool_call_update")
+        self.assertEqual(responses[2]["update"]["sessionUpdate"], "agent_message_chunk")
+        self.assertEqual(responses[-1]["type"], "bridge.done")
+
+    def test_approval_decision_websocket_response_is_tool_call_update(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+        )
+
+        responses = runtime.websocket_responses({"type": "approval.decide", "approvalId": "approval_1", "decision": "approved"})
+
+        self.assertEqual(responses[0]["update"]["sessionUpdate"], "tool_call_update")
+        self.assertEqual(responses[0]["update"]["toolCallId"], "approval_1")
+        self.assertEqual(responses[-1]["type"], "bridge.done")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,10 +17,10 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - New Chat form with machine, per-chat workspace path, and agent selection.
 - Chat list and WhatsApp-style chat detail view with full conversation history.
 - Fixed bottom prompt box for sending chat messages.
-- Collapsible agent activity cards for tool calls, bridge calls, and future agent steps.
+- Collapsible agent activity cards for ACP `tool_call` and `tool_call_update` events.
 - Approval list with approve/deny actions.
 
-Full ACP agent execution is not wired yet. The current chat shell sends prompt and approval messages through the bridge WebSocket and displays bridge responses as agent activity.
+Full ACP agent execution is not wired yet. The current chat shell sends prompt and approval messages through the bridge WebSocket and displays ACP-style `session/update` responses as agent messages and expandable activity cards.
 
 ## Pairing UX
 
@@ -60,6 +60,13 @@ If the pairing payload includes `headers`, the app sends those headers with all 
 The chat shell uses:
 
 - `WS /ws?token=<deviceToken>`
+
+The app maps these bridge/ACP events:
+
+- `session/update` + `tool_call` -> collapsed Agent Activity card.
+- `session/update` + `tool_call_update` -> collapsed Agent Activity card with status/details.
+- `session/update` + `agent_message_chunk` -> normal agent chat bubble.
+- `bridge.done` -> ends the current one-shot WebSocket request.
 
 ## Workspace Selection
 

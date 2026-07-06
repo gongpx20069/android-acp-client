@@ -1,8 +1,11 @@
 package com.gongpx.androidacpclient.data.bridge
 
 import com.gongpx.androidacpclient.data.model.Agent
+import com.gongpx.androidacpclient.data.model.ChatMessage
+import com.gongpx.androidacpclient.data.model.ChatMessageKind
 import com.gongpx.androidacpclient.data.model.ConnectionState
 import com.gongpx.androidacpclient.data.model.Machine
+import com.gongpx.androidacpclient.data.model.MessageRole
 import com.gongpx.androidacpclient.data.model.PairingPayload
 import com.gongpx.androidacpclient.data.model.Workspace
 import java.io.IOException
@@ -68,7 +71,7 @@ class BridgeClient {
         }
     }
 
-    suspend fun sendChatPrompt(machine: Machine, chatId: String, text: String): Result<String> {
+    suspend fun sendChatPrompt(machine: Machine, chatId: String, text: String): Result<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
@@ -78,7 +81,7 @@ class BridgeClient {
         )
     }
 
-    suspend fun sendApprovalDecision(machine: Machine, approvalId: String, decision: String): Result<String> {
+    suspend fun sendApprovalDecision(machine: Machine, approvalId: String, decision: String): Result<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
@@ -111,12 +114,13 @@ class BridgeClient {
         return connection.useJsonResponse()
     }
 
-    private suspend fun sendBridgeMessage(machine: Machine, payload: JSONObject): Result<String> {
+    private suspend fun sendBridgeMessage(machine: Machine, payload: JSONObject): Result<List<ChatMessage>> {
         return suspendCancellableCoroutine { continuation ->
             val requestBuilder = Request.Builder().url(toWebSocketUrl(machine.endpoint, machine.deviceToken))
             machine.connectionHeaders.forEach { (name, value) ->
                 requestBuilder.addHeader(name, value)
             }
+            val messages = mutableListOf<ChatMessage>()
 
             var socket: WebSocket? = null
             socket = webSocketClient.newWebSocket(
@@ -127,10 +131,15 @@ class BridgeClient {
                     }
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        if (continuation.isActive) {
-                            continuation.resume(Result.success(text))
+                        val parsed = parseBridgeMessage(text)
+                        if (parsed.done) {
+                            if (continuation.isActive) {
+                                continuation.resume(Result.success(messages.toList()))
+                            }
+                            webSocket.close(1000, "done")
+                            return
                         }
-                        webSocket.close(1000, "done")
+                        parsed.message?.let(messages::add)
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -179,6 +188,71 @@ class BridgeClient {
         return endpoint.trimEnd('/') + "/ws?token=" + encodedToken
     }
 
+    private fun parseBridgeMessage(text: String): ParsedBridgeMessage {
+        val json = runCatching { JSONObject(text) }.getOrNull()
+            ?: return ParsedBridgeMessage(message = ChatMessage(MessageRole.Agent, text, System.currentTimeMillis()))
+        if (json.optString("type") == "bridge.done") {
+            return ParsedBridgeMessage(done = true)
+        }
+
+        val update = json.optJSONObject("update")
+        if (json.optString("type") == "session/update" && update != null) {
+            return ParsedBridgeMessage(message = update.toChatMessage())
+        }
+
+        return ParsedBridgeMessage(
+            message = ChatMessage(
+                role = MessageRole.Agent,
+                text = json.toString(),
+                timestampMillis = System.currentTimeMillis(),
+                kind = ChatMessageKind.Activity,
+                title = json.optString("type", "Bridge event"),
+                details = json.toString(2),
+            ),
+        )
+    }
+
+    private fun JSONObject.toChatMessage(): ChatMessage {
+        val sessionUpdate = optString("sessionUpdate")
+        return when (sessionUpdate) {
+            "tool_call", "tool_call_update" -> {
+                val content = optJSONObject("content")
+                val status = optString("status").ifBlank { if (sessionUpdate == "tool_call") "started" else "updated" }
+                val title = optString("title").ifBlank { optString("kind").ifBlank { "Tool call" } }
+                ChatMessage(
+                    role = MessageRole.Agent,
+                    text = "$title · $status",
+                    timestampMillis = System.currentTimeMillis(),
+                    kind = ChatMessageKind.Activity,
+                    title = title,
+                    details = JSONObject()
+                        .put("sessionUpdate", sessionUpdate)
+                        .put("toolCallId", optString("toolCallId"))
+                        .put("kind", optString("kind"))
+                        .put("status", status)
+                        .put("content", content ?: JSONObject())
+                        .toString(2),
+                )
+            }
+            "agent_message_chunk" -> {
+                val content = optJSONObject("content")
+                ChatMessage(
+                    role = MessageRole.Agent,
+                    text = content?.optString("text").orEmpty().ifBlank { optString("text").ifBlank { toString() } },
+                    timestampMillis = System.currentTimeMillis(),
+                )
+            }
+            else -> ChatMessage(
+                role = MessageRole.Agent,
+                text = sessionUpdate.ifBlank { "Agent update" },
+                timestampMillis = System.currentTimeMillis(),
+                kind = ChatMessageKind.Activity,
+                title = sessionUpdate.ifBlank { "Agent update" },
+                details = toString(2),
+            )
+        }
+    }
+
     private fun JSONArray.toAgents(): List<Agent> {
         return List(length()) { index ->
             val item = getJSONObject(index)
@@ -205,3 +279,8 @@ class BridgeClient {
         const val TIMEOUT_MS = 10_000
     }
 }
+
+private data class ParsedBridgeMessage(
+    val message: ChatMessage? = null,
+    val done: Boolean = false,
+)

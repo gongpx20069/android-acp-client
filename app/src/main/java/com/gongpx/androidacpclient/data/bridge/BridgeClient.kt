@@ -104,7 +104,7 @@ class BridgeClient {
         ).map { events ->
             events.firstOrNull { it.optString("type") == "session.list.result" }
                 ?.optJSONArray("sessions")
-                .orEmpty()
+                ?: JSONArray()
                 .toSessionInfos()
         }
     }
@@ -373,19 +373,17 @@ class BridgeClient {
                 absolutePath = item.getString("absolutePath"),
             )
         }
+    }
 
-        private fun JSONArray?.orEmpty(): JSONArray = this ?: JSONArray()
-
-        private fun JSONArray.toSessionInfos(): List<AgentSessionInfo> {
-            return List(length()) { index ->
-                val item = getJSONObject(index)
-                AgentSessionInfo(
-                    sessionId = item.getString("sessionId"),
-                    title = item.optString("title").ifBlank { null },
-                    cwd = item.optString("cwd").ifBlank { null },
-                    updatedAt = item.optString("updatedAt").ifBlank { null },
-                )
-            }
+    private fun JSONArray.toSessionInfos(): List<AgentSessionInfo> {
+        return List(length()) { index ->
+            val item = getJSONObject(index)
+            AgentSessionInfo(
+                sessionId = item.getString("sessionId"),
+                title = item.optString("title").ifBlank { null },
+                cwd = item.optString("cwd").ifBlank { null },
+                updatedAt = item.optString("updatedAt").ifBlank { null },
+            )
         }
     }
 

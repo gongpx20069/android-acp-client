@@ -591,49 +591,6 @@ private fun ChatDetailScreen(
                     ) {
                         Text("Send")
                     }
-
-                    @Composable
-                    private fun ResumeDialog(state: ResumeDialogState, onDismiss: () -> Unit, onSelect: (AgentSessionInfo) -> Unit) {
-                        AlertDialog(
-                            onDismissRequest = onDismiss,
-                            title = { Text("Resume session") },
-                            text = {
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    state.error?.let {
-                                        Text("Could not load sessions: $it", color = MaterialTheme.colorScheme.error)
-                                    }
-                                    when (val sessions = state.sessions) {
-                                        null -> Text("Loading sessions from ${state.chat.agentName}...")
-                                        else -> {
-                                            if (sessions.isEmpty() && state.error == null) {
-                                                Text("No resumable sessions found for this workspace.")
-                                            }
-                                            sessions.take(8).forEach { session ->
-                                                Surface(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clickable { onSelect(session) },
-                                                    shape = RoundedCornerShape(14.dp),
-                                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.70f),
-                                                ) {
-                                                    Column(Modifier.padding(12.dp)) {
-                                                        Text(session.title ?: session.sessionId, fontWeight = FontWeight.SemiBold)
-                                                        session.cwd?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                                                        session.updatedAt?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            confirmButton = {
-                                OutlinedButton(onClick = onDismiss) {
-                                    Text("Close")
-                                }
-                            },
-                        )
-                    }
                     OutlinedButton(onClick = onRequestApproval) {
                         Text("Test Approval")
                     }
@@ -641,6 +598,49 @@ private fun ChatDetailScreen(
             }
         }
     }
+}
+
+@Composable
+private fun ResumeDialog(state: ResumeDialogState, onDismiss: () -> Unit, onSelect: (AgentSessionInfo) -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Resume session") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                state.error?.let {
+                    Text("Could not load sessions: $it", color = MaterialTheme.colorScheme.error)
+                }
+                when (val sessions = state.sessions) {
+                    null -> Text("Loading sessions from ${state.chat.agentName}...")
+                    else -> {
+                        if (sessions.isEmpty() && state.error == null) {
+                            Text("No resumable sessions found for this workspace.")
+                        }
+                        sessions.take(8).forEach { session ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelect(session) },
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.70f),
+                            ) {
+                                Column(Modifier.padding(12.dp)) {
+                                    Text(session.title ?: session.sessionId, fontWeight = FontWeight.SemiBold)
+                                    session.cwd?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                                    session.updatedAt?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
 }
 
 @Composable

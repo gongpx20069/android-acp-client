@@ -172,10 +172,24 @@ class RuntimeTests(unittest.TestCase):
             agent_manager=FakeAgentManager(),
         )
 
-        responses = runtime.websocket_responses({"type": "session.setConfigOption", "chatId": "chat_1", "configId": "model", "value": "gpt-5.4"})
+        responses = runtime.websocket_responses({"type": "session.setConfigOption", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "configId": "model", "value": "gpt-5.4"})
 
         self.assertEqual(responses[0]["update"]["sessionUpdate"], "config_option_update")
         self.assertEqual(responses[0]["update"]["configOptions"][0]["currentValue"], "gpt-5.4")
+        self.assertEqual(responses[-1]["type"], "bridge.done")
+
+    def test_session_refresh_config_options_returns_latest_config(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+
+        responses = runtime.websocket_responses({"type": "session.refreshConfigOptions", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo"})
+
+        self.assertEqual(responses[0]["update"]["sessionUpdate"], "config_option_update")
+        self.assertEqual(responses[0]["update"]["configOptions"][0]["id"], "model")
         self.assertEqual(responses[-1]["type"], "bridge.done")
 
     def test_permission_request_emits_approval_and_waits_for_decision(self) -> None:
@@ -281,7 +295,27 @@ class FakeAgentManager:
             }
         ]
 
-    def set_config_option(self, chat_id: str, config_id: str, value: str):
+    def refresh_config_options(self, chat_id: str, agent_id: str, workspace_path: str):
+        return [
+            {
+                "type": "session/update",
+                "update": {
+                    "sessionUpdate": "config_option_update",
+                    "configOptions": [
+                        {
+                            "id": "model",
+                            "name": "Model",
+                            "category": "model",
+                            "type": "select",
+                            "currentValue": "gpt-5.4",
+                            "options": [{"value": "gpt-5.4", "name": "gpt-5.4"}],
+                        }
+                    ],
+                },
+            }
+        ]
+
+    def set_config_option(self, chat_id: str, agent_id: str, workspace_path: str, config_id: str, value: str):
         return [
             {
                 "type": "session/update",

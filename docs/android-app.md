@@ -17,6 +17,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - New Chat form with two modes: create a new ACP session, or open an existing resumable ACP session returned by the selected machine and agent.
 - Chat list and WhatsApp-style chat detail view with full conversation history.
 - Chat, approval, and machine list rows support left-swipe deletion. Deleting a pending approval sends a deny decision before removing it locally.
+- Chat list rows and the chat detail header show a small status dot: busy while a prompt is running, idle otherwise.
 - Opening a chat automatically scrolls to the newest message.
 - Fixed bottom prompt box for sending chat messages.
 - Horizontally scrollable command chips above the prompt box.
@@ -98,9 +99,9 @@ AgentLink displays advertised commands as chips without the slash prefix. Tappin
 
 `resume` is a built-in AgentLink chip rather than a prompt command. It opens a session picker backed by ACP `session/list`; choosing a session calls `session/load` for the current chat and workspace. AgentLink appends at most the latest 50 loaded chat messages from a resumed session. Typing `/resume` in the prompt is still treated as plain prompt text unless the ACP agent explicitly advertises a `resume` slash command.
 
-`model` is also a built-in AgentLink chip. It opens a model picker backed by the latest ACP `config_option_update` option with `id == "model"`, `category == "model"`, or a model-like name. Selecting a model sends ACP `session/set_config_option` through the bridge and updates the picker with the returned `configOptions`. If options have not arrived yet, the picker explains that config options are still loading instead of sending `/model` as a prompt.
+`model` is also a built-in AgentLink chip. It opens a model picker backed by the latest ACP `config_option_update` option with `id == "model"`, `category == "model"`, or a model-like name. Opening the picker asks the bridge to refresh config options for the current chat, creating an ACP session first if needed. Selecting a model sends ACP `session/set_config_option` through the bridge and updates the picker with the returned `configOptions`. If options have not arrived yet, the picker explains that config options are still loading instead of sending `/model` as a prompt.
 
-`allow-all` is a built-in AgentLink chip backed by ACP config options such as `allow_all`, `allowAll`, or `Allow All`. It opens a small on/off picker and sends ACP `session/set_config_option` when changed; boolean config options are normalized into On/Off choices.
+`allow-all` is a built-in AgentLink chip backed by ACP config options such as `allow_all`, `allowAll`, or `Allow All`. It opens a small on/off picker and sends ACP `session/set_config_option` when changed; boolean config options are normalized into On/Off choices. Opening the picker also refreshes config options from the bridge.
 
 ## Approval Flow
 

@@ -95,6 +95,7 @@ class BridgeClient {
                 .put("content", text),
             onMessage = onMessage,
             onApproval = onApproval,
+            allowPartialOnFailure = true,
         )
     }
 
@@ -153,6 +154,18 @@ class BridgeClient {
                 .put("workspacePath", workspacePath)
                 .put("configId", configId)
                 .put("value", value),
+        )
+    }
+
+    suspend fun refreshConfigOptions(machine: Machine, chatId: String, agentId: String, workspacePath: String): Result<List<ChatMessage>> {
+        return sendBridgeMessage(
+            machine,
+            JSONObject()
+                .put("type", "session.refreshConfigOptions")
+                .put("chatId", chatId)
+                .put("agentId", agentId)
+                .put("workspacePath", workspacePath),
+            allowPartialOnFailure = true,
         )
     }
 

@@ -44,7 +44,10 @@ class AgentManager(Protocol):
     def load_session(self, chat_id: str, agent_id: str, workspace_path: str, session_id: str) -> list[dict[str, Any]]:
         ...
 
-    def set_config_option(self, chat_id: str, config_id: str, value: str) -> list[dict[str, Any]]:
+    def refresh_config_options(self, chat_id: str, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
+        ...
+
+    def set_config_option(self, chat_id: str, agent_id: str, workspace_path: str, config_id: str, value: str) -> list[dict[str, Any]]:
         ...
 
 
@@ -114,6 +117,8 @@ class BridgeRuntime:
             return self._session_list_response(payload)
         if message_type == "session.load":
             return self._session_load_response(payload)
+        if message_type == "session.refreshConfigOptions":
+            return self._session_refresh_config_options_response(payload)
         if message_type == "session.setConfigOption":
             return self._session_set_config_option_response(payload)
         if message_type == "approval.decide":
@@ -261,10 +266,12 @@ class BridgeRuntime:
 
     def _session_set_config_option_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
+        agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
+        workspace_path = _string_or_default(payload.get("workspacePath"), "")
         config_id = _string_or_default(payload.get("configId"), "")
         value = _string_or_default(payload.get("value"), "")
         try:
-            updates = self.agent_manager.set_config_option(chat_id, config_id, value)
+            updates = self.agent_manager.set_config_option(chat_id, agent_id, workspace_path, config_id, value)
         except AcpAgentError as exc:
             updates = [
                 {
@@ -274,6 +281,31 @@ class BridgeRuntime:
                         "sessionUpdate": "tool_call_update",
                         "toolCallId": "set_config_option",
                         "title": "Set config",
+                        "kind": "other",
+                        "status": "failed",
+                        "content": {"error": str(exc)},
+                    },
+                }
+            ]
+        for update in updates:
+            update.setdefault("chatId", chat_id)
+        return updates + [{"type": "bridge.done", "chatId": chat_id}]
+
+    def _session_refresh_config_options_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
+        agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
+        workspace_path = _string_or_default(payload.get("workspacePath"), "")
+        try:
+            updates = self.agent_manager.refresh_config_options(chat_id, agent_id, workspace_path)
+        except AcpAgentError as exc:
+            updates = [
+                {
+                    "type": "session/update",
+                    "chatId": chat_id,
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "config_refresh",
+                        "title": "Config options",
                         "kind": "other",
                         "status": "failed",
                         "content": {"error": str(exc)},

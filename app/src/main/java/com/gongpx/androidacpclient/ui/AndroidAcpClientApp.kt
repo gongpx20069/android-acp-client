@@ -457,6 +457,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
     val machines = remember { mutableStateListOf<Machine>() }
     val chats = remember { mutableStateListOf<Chat>() }
     val approvals = remember { mutableStateListOf<Approval>() }
+    val busyChatIds = remember { mutableStateListOf<String>() }
     var selectedTab by remember { mutableStateOf(AppTab.Machines) }
     var selectedChatId by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -652,6 +653,23 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
 
     fun showModelDialog(chat: Chat, option: ConfigOption) {
         modelDialogState = ModelDialogState(chat = chat, option = option)
+        val machine = machines.firstOrNull { it.id == chat.machineId } ?: return
+        scope.launch {
+            bridgeClient.refreshConfigOptions(machine, chat.id, chat.agentId, chat.workspacePath)
+                .onSuccess { events ->
+                    val current = chats.firstOrNull { it.id == chat.id } ?: chat
+                    val refreshed = current.copy(messages = current.messages + events)
+                    upsertChat(refreshed)
+                    val refreshedOption = when {
+                        option.id.normalizedKey() == "model" -> refreshed.modelConfigOption()
+                        option.id.normalizedKey() in ALLOW_ALL_KEYS -> refreshed.allowAllConfigOption()
+                        else -> null
+                    }
+                    if (refreshedOption != null) {
+                        modelDialogState = ModelDialogState(chat = refreshed, option = refreshedOption)
+                    }
+                }
+        }
     }
 
     fun setModel(chat: Chat, option: ConfigOption, value: ConfigOptionValue) {
@@ -795,6 +813,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                             padding = padding,
                             machines = machines,
                             chats = chats,
+                            busyChatIds = busyChatIds.toSet(),
                             selectedChatId = selectedChatId,
                             onCreateChat = ::createChat,
                             onOpenExistingSession = ::openExistingSession,
@@ -811,6 +830,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                 } else {
                                     val updated = chat.withMessage(MessageRole.User, message)
                                     upsertChat(updated)
+                                    if (chat.id !in busyChatIds) busyChatIds.add(chat.id)
                                     scope.launch {
                                         bridgeClient.sendChatPrompt(
                                             machine = machine,
@@ -839,7 +859,11 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                                 // Stream callbacks update the timeline while the prompt is running.
                                             }
                                             .onFailure {
-                                                upsertChat(updated.withMessage(MessageRole.System, strings.bridgeWebSocketFailed(it.message)))
+                                                val current = chats.firstOrNull { current -> current.id == chat.id } ?: updated
+                                                upsertChat(current.withMessage(MessageRole.System, strings.bridgeWebSocketFailed(it.message)))
+                                            }
+                                            .also {
+                                                busyChatIds.remove(chat.id)
                                             }
                                     }
                                 }
@@ -987,6 +1011,7 @@ private fun ChatsScreen(
     padding: PaddingValues,
     machines: List<Machine>,
     chats: List<Chat>,
+    busyChatIds: Set<String>,
     selectedChatId: String?,
     onCreateChat: (Machine, String, Agent) -> Unit,
     onOpenExistingSession: (Machine, Agent, AgentSessionInfo) -> Unit,
@@ -1004,6 +1029,7 @@ private fun ChatsScreen(
         ChatDetailScreen(
             padding = padding,
             chat = selectedChat,
+            isBusy = selectedChat.id in busyChatIds,
             onBack = onBackToList,
             onSendMessage = { onSendMessage(selectedChat, it) },
             onCommand = { command ->
@@ -1184,7 +1210,10 @@ private fun ChatsScreen(
                 SwipeToDeleteItem(onDelete = { onDeleteChat(chat) }) {
                     ElevatedCard(onClick = { onOpenChat(chat) }, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
-                            Text(chat.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                ChatStatusDot(isBusy = chat.id in busyChatIds)
+                                Text(chat.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            }
                             Text("${chat.machineName} · ${chat.workspacePath}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(strings.messages(chat.messages.size), style = MaterialTheme.typography.labelMedium)
                         }
@@ -1199,6 +1228,7 @@ private fun ChatsScreen(
 private fun ChatDetailScreen(
     padding: PaddingValues,
     chat: Chat,
+    isBusy: Boolean,
     onBack: () -> Unit,
     onSendMessage: (String) -> Unit,
     onCommand: (AvailableCommand) -> Unit,
@@ -1238,7 +1268,10 @@ private fun ChatDetailScreen(
                     Text(strings.back)
                 }
                 Column {
-                    Text(chat.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ChatStatusDot(isBusy = isBusy)
+                        Text(chat.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    }
                     Text("${chat.machineName} · ${chat.workspacePath}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(chat.agentName, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 }

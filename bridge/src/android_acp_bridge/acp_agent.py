@@ -31,11 +31,13 @@ class AcpAgentManager:
 
     def prompt(self, request: AcpPromptRequest, permission_callback: PermissionCallback | None = None) -> list[dict[str, Any]]:
         session = self._sessions.get(request.chat_id)
+        startup_updates: list[dict[str, Any]] = []
         if session is None:
             session = AcpAgentSession.start(request.agent_id, request.workspace_path)
             self._sessions[request.chat_id] = session
+            startup_updates = session.take_pending_updates()
         session.permission_callback = permission_callback
-        return session.prompt(request.prompt)
+        return startup_updates + session.prompt(request.prompt)
 
     def list_sessions(self, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
         session = AcpAgentSession.start_without_session(agent_id, workspace_path)
@@ -52,11 +54,23 @@ class AcpAgentManager:
         self._sessions[chat_id] = session
         return updates
 
-    def set_config_option(self, chat_id: str, config_id: str, value: str) -> list[dict[str, Any]]:
+    def refresh_config_options(self, chat_id: str, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
         session = self._sessions.get(chat_id)
+        startup_updates: list[dict[str, Any]] = []
         if session is None:
-            raise AcpAgentError("No active ACP session exists for this chat. Send a prompt before changing model.")
-        return session.set_config_option(config_id, value)
+            session = AcpAgentSession.start(agent_id, workspace_path)
+            self._sessions[chat_id] = session
+            startup_updates = session.take_pending_updates()
+        return startup_updates + session.config_option_updates()
+
+    def set_config_option(self, chat_id: str, agent_id: str, workspace_path: str, config_id: str, value: str) -> list[dict[str, Any]]:
+        session = self._sessions.get(chat_id)
+        startup_updates: list[dict[str, Any]] = []
+        if session is None:
+            session = AcpAgentSession.start(agent_id, workspace_path)
+            self._sessions[chat_id] = session
+            startup_updates = session.take_pending_updates()
+        return startup_updates + session.set_config_option(config_id, value)
 
 
 class AcpAgentSession:
@@ -66,6 +80,8 @@ class AcpAgentSession:
         self._session_id = session_id
         self._next_id = 3
         self.permission_callback: PermissionCallback | None = None
+        self._pending_updates: list[dict[str, Any]] = []
+        self._latest_config_options: list[dict[str, Any]] = []
 
     @classmethod
     def start(cls, agent_id: str, workspace_path: str) -> AcpAgentSession:
@@ -80,6 +96,7 @@ class AcpAgentSession:
             timeout_seconds=60,
         )
         session._session_id = _extract_session_id(result)
+        session._pending_updates = updates
         return session
 
     @classmethod
@@ -150,6 +167,11 @@ class AcpAgentSession:
         )
         return updates
 
+    def take_pending_updates(self) -> list[dict[str, Any]]:
+        updates = self._pending_updates
+        self._pending_updates = []
+        return updates
+
     def list_sessions(self, workspace_path: str) -> list[dict[str, Any]]:
         params: dict[str, Any] = {}
         if workspace_path.strip() and workspace_path.strip() != "~":
@@ -179,6 +201,19 @@ class AcpAgentSession:
                 "update": {
                     "sessionUpdate": "config_option_update",
                     "configOptions": config_options if isinstance(config_options, list) else [],
+                },
+            }
+        ]
+
+    def config_option_updates(self) -> list[dict[str, Any]]:
+        if not self._latest_config_options:
+            return []
+        return [
+            {
+                "type": "session/update",
+                "update": {
+                    "sessionUpdate": "config_option_update",
+                    "configOptions": self._latest_config_options,
                 },
             }
         ]
@@ -215,6 +250,8 @@ class AcpAgentSession:
                 params_value = message.get("params") if isinstance(message.get("params"), dict) else {}
                 update = params_value.get("update") if isinstance(params_value, dict) else None
                 if isinstance(update, dict):
+                    if update.get("sessionUpdate") == "config_option_update" and isinstance(update.get("configOptions"), list):
+                        self._latest_config_options = update["configOptions"]
                     updates.append({"type": "session/update", "update": update})
             elif method_name == "session/request_permission":
                 self._handle_permission_request(message)

@@ -686,6 +686,7 @@ private fun ChatsScreen(
                             Text("New Chat", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                             Text(
                                 if (newChatExpanded) "Choose machine, workspace, and agent" else "Tap to create another agent session",
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
                         }
@@ -1399,7 +1400,7 @@ private fun NewChatTogglePill(onClick: () -> Unit) {
     val fillColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.18f)
     Surface(
         modifier = Modifier
-            .size(width = 58.dp, height = 32.dp)
+            .size(width = 48.dp, height = 30.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(999.dp),
         color = fillColor,
@@ -1408,8 +1409,13 @@ private fun NewChatTogglePill(onClick: () -> Unit) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Box(
                 Modifier
-                    .fillMaxWidth(0.62f)
+                    .fillMaxWidth(0.42f)
                     .height(2.dp)
+                    .background(strokeColor, RoundedCornerShape(999.dp)),
+            )
+            Box(
+                Modifier
+                    .size(width = 2.dp, height = 13.dp)
                     .background(strokeColor, RoundedCornerShape(999.dp)),
             )
         }
@@ -1434,29 +1440,24 @@ private fun NewChatModeSelector(selectedMode: NewChatMode, onSelect: (NewChatMod
                 ),
                 tonalElevation = if (selected) 4.dp else 0.dp,
             ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(mode.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = contentColor)
-                        if (selected) {
-                            Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.primary) {
-                                Text(
-                                    "✓",
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                            }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 11.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(mode.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = contentColor)
+                    if (selected) {
+                        Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.primary) {
+                            Text(
+                                "✓",
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
                         }
                     }
-                    Text(
-                        if (mode == NewChatMode.NewSession) "Start from workspace" else "Resume from agent",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (selected) contentColor.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
         }

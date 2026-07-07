@@ -465,57 +465,6 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                         )
                     }
 
-                    @Composable
-                    private fun SettingsScreen(
-                        padding: PaddingValues,
-                        updateState: UpdateUiState,
-                        onCheckForUpdate: () -> Unit,
-                        onOpenUpdate: (AppUpdate) -> Unit,
-                    ) {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(padding),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                        ) {
-                            item {
-                                PageHero(
-                                    title = "Settings",
-                                    subtitle = "Manage AgentLink app behavior and releases.",
-                                    metric = "v${BuildConfig.VERSION_NAME}",
-                                )
-                            }
-                            item {
-                                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("Updates", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                                        Text("Current version: ${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        updateState.message?.let {
-                                            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)) {
-                                                Text(it, modifier = Modifier.padding(12.dp))
-                                            }
-                                        }
-                                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Button(enabled = !updateState.checking, onClick = onCheckForUpdate) {
-                                                Text(if (updateState.checking) "Checking..." else "Check for updates")
-                                            }
-                                            updateState.update?.takeIf { it.isNewer }?.let { update ->
-                                                OutlinedButton(onClick = { onOpenUpdate(update) }) {
-                                                    Text("Download ${update.version}")
-                                                }
-                                            }
-                                        }
-                                        Text(
-                                            "APK downloads open in the browser/system installer. Signed release APKs can update in-place after the signing key is configured.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -533,6 +482,58 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                 onDismiss = { modelDialogState = null },
                 onSelect = { setModel(state.chat, state.option, it) },
             )
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    padding: PaddingValues,
+    updateState: UpdateUiState,
+    onCheckForUpdate: () -> Unit,
+    onOpenUpdate: (AppUpdate) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            PageHero(
+                title = "Settings",
+                subtitle = "Manage AgentLink app behavior and releases.",
+                metric = "v${BuildConfig.VERSION_NAME}",
+            )
+        }
+        item {
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Updates", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Current version: ${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    updateState.message?.let {
+                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)) {
+                            Text(it, modifier = Modifier.padding(12.dp))
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Button(enabled = !updateState.checking, onClick = onCheckForUpdate) {
+                            Text(if (updateState.checking) "Checking..." else "Check for updates")
+                        }
+                        updateState.update?.takeIf { it.isNewer }?.let { update ->
+                            OutlinedButton(onClick = { onOpenUpdate(update) }) {
+                                Text("Download ${update.version}")
+                            }
+                        }
+                    }
+                    Text(
+                        "APK downloads open in the browser/system installer. Signed release APKs can update in-place after the signing key is configured.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }

@@ -322,15 +322,6 @@ class BridgeClient {
                 )
             }
 
-            private fun JSONObject.toApprovalRequest(): BridgeApprovalRequest? {
-                val approvalId = optString("approvalId").ifBlank { return null }
-                return BridgeApprovalRequest(
-                    approvalId = approvalId,
-                    action = optString("action").ifBlank { "tool_permission" },
-                    summary = optString("summary").ifBlank { "Agent requests permission" },
-                    details = optJSONObject("details")?.toString(2),
-                )
-            }
             "available_commands_update" -> {
                 ChatMessage(
                     role = MessageRole.System,
@@ -395,6 +386,16 @@ class BridgeClient {
                 details = toString(2),
             )
         }
+    }
+
+    private fun JSONObject.toApprovalRequest(): BridgeApprovalRequest? {
+        val approvalId = optString("approvalId").ifBlank { return null }
+        return BridgeApprovalRequest(
+            approvalId = approvalId,
+            action = optString("action").ifBlank { "tool_permission" },
+            summary = optString("summary").ifBlank { "Agent requests permission" },
+            details = optJSONObject("details")?.toString(2),
+        )
     }
 
     private fun mergeStreamingMessage(messages: MutableList<ChatMessage>, message: ChatMessage) {

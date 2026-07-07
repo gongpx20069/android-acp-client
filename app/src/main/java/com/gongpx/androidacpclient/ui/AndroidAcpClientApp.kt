@@ -428,8 +428,16 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                 NavigationBarItem(
                                     selected = selectedTab == tab,
                                     onClick = { selectedTab = tab },
-                                    label = { Text(tab.label) },
-                                    icon = { Text(tab.icon, fontSize = 24.sp, fontWeight = FontWeight.Bold) },
+                                    label = null,
+                                    icon = {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(0.dp),
+                                        ) {
+                                            Text(tab.icon, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                            Text(tab.label, style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    },
                                 )
                             }
                         }
@@ -564,7 +572,7 @@ private fun SettingsScreen(
         item {
             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Updates", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Updates", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text("Current version: ${BuildConfig.VERSION_NAME}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     updateState.message?.let {
                         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)) {
@@ -652,7 +660,7 @@ private fun ChatsScreen(
                 Column(Modifier.padding(18.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column {
-                            Text("New Chat", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                            Text("New Chat", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                             Text(
                                 if (newChatExpanded) "Choose machine, workspace, and agent" else "Tap to create another agent session",
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1246,7 +1254,7 @@ private fun MachinesScreen(
         item {
             ElevatedCard(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(18.dp)) {
-                    Text("Add Machine", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                    Text("Add Machine", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Text("Scan the bridge QR code, or paste the acpclient://pair link.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1377,7 +1385,7 @@ private fun SelectableOptionCard(selected: Boolean, title: String, subtitle: Str
 @Composable
 private fun SectionHeader(title: String, subtitle: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(subtitle, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
     }
 }
@@ -1393,7 +1401,7 @@ private fun PageHero(title: String, subtitle: String, metric: String) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text(subtitle, color = MaterialTheme.colorScheme.onSecondaryContainer)
             }
             Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)) {

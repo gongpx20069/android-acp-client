@@ -1353,7 +1353,7 @@ private fun CommandPill(command: AvailableCommand, onClick: () -> Unit) {
 
 @Composable
 private fun ChatStatusDot(isBusy: Boolean) {
-    val color = if (isBusy) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+    val color = if (isBusy) Color(0xFFDC2626) else Color(0xFF16A34A)
     Box(
         modifier = Modifier
             .size(8.dp)

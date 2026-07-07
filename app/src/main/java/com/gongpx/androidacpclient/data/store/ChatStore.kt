@@ -30,6 +30,10 @@ class ChatStore(context: Context) {
         preferences.edit().putString(KEY_CHATS, JSONArray(next.map { it.toJson() }).toString()).apply()
     }
 
+    fun remove(chatId: String) {
+        replaceAll(load().filterNot { it.id == chatId })
+    }
+
     fun replaceAll(chats: List<Chat>) {
         preferences.edit().putString(KEY_CHATS, JSONArray(chats.map { it.toJson() }).toString()).apply()
     }

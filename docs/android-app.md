@@ -16,6 +16,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - Health, agents, and workspaces loading from the bridge.
 - New Chat form with two modes: create a new ACP session, or open an existing resumable ACP session returned by the selected machine and agent.
 - Chat list and WhatsApp-style chat detail view with full conversation history.
+- Chat, approval, and machine list rows support left-swipe deletion. Deleting a pending approval sends a deny decision before removing it locally.
 - Opening a chat automatically scrolls to the newest message.
 - Fixed bottom prompt box for sending chat messages.
 - Horizontally scrollable command chips above the prompt box.

@@ -48,8 +48,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -152,6 +155,18 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         val index = chats.indexOfFirst { it.id == chat.id }
         if (index >= 0) chats[index] = chat else chats.add(chat)
         chatStore.upsert(chat)
+    }
+
+    fun deleteChat(chat: Chat) {
+        chats.removeAll { it.id == chat.id }
+        chatStore.remove(chat.id)
+        if (selectedChatId == chat.id) selectedChatId = null
+    }
+
+    fun deleteMachine(machine: Machine) {
+        machines.removeAll { it.id == machine.id }
+        machineStore.remove(machine.id)
+        if (statusMessage?.contains(machine.displayName) == true) statusMessage = null
     }
 
     fun createChat(machine: Machine, workspacePath: String, agent: Agent) {
@@ -261,6 +276,13 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         scope.launch {
             bridgeClient.sendApprovalDecision(machine, approval.id, if (status == ApprovalStatus.Approved) "approved" else "denied")
         }
+    }
+
+    fun deleteApproval(approval: Approval) {
+        if (approval.status == ApprovalStatus.Pending) {
+            updateApproval(approval, ApprovalStatus.Denied)
+        }
+        approvals.removeAll { it.id == approval.id }
     }
 
     fun showResumeDialog(chat: Chat) {
@@ -454,6 +476,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                             onOpenExistingSession = ::openExistingSession,
                             onLoadExistingSessions = ::loadExistingSessions,
                             onOpenChat = { selectedChatId = it.id },
+                            onDeleteChat = ::deleteChat,
                             onBackToList = { selectedChatId = null },
                             onResume = ::showResumeDialog,
                             onModel = ::showModelDialog,
@@ -498,7 +521,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                 }
                             },
                         )
-                        AppTab.Approvals -> ApprovalsScreen(padding, approvals, ::updateApproval)
+                        AppTab.Approvals -> ApprovalsScreen(padding, approvals, ::updateApproval, ::deleteApproval)
                         AppTab.Machines -> MachinesScreen(
                             padding = padding,
                             machines = machines,
@@ -518,6 +541,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                         }
                                 }
                             },
+                            onDeleteMachine = ::deleteMachine,
                         )
                         AppTab.Settings -> SettingsScreen(
                             padding = padding,
@@ -610,6 +634,7 @@ private fun ChatsScreen(
     onOpenExistingSession: (Machine, Agent, AgentSessionInfo) -> Unit,
     onLoadExistingSessions: (Machine, Agent, (Result<List<AgentSessionInfo>>) -> Unit) -> Unit,
     onOpenChat: (Chat) -> Unit,
+    onDeleteChat: (Chat) -> Unit,
     onBackToList: () -> Unit,
     onResume: (Chat) -> Unit,
     onModel: (Chat, ConfigOption) -> Unit,
@@ -795,11 +820,13 @@ private fun ChatsScreen(
             item { EmptyStateCard("No chats yet", "Create a chat above after pairing a machine.") }
         } else {
             items(chats, key = { it.id }) { chat ->
-                ElevatedCard(onClick = { onOpenChat(chat) }, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(chat.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text("${chat.machineName} · ${chat.workspacePath}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${chat.messages.size} messages", style = MaterialTheme.typography.labelMedium)
+                SwipeToDeleteItem(onDelete = { onDeleteChat(chat) }) {
+                    ElevatedCard(onClick = { onOpenChat(chat) }, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(chat.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text("${chat.machineName} · ${chat.workspacePath}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${chat.messages.size} messages", style = MaterialTheme.typography.labelMedium)
+                        }
                     }
                 }
             }
@@ -1247,7 +1274,12 @@ private fun AgentActivityItem(item: ChatMessage) {
 }
 
 @Composable
-private fun ApprovalsScreen(padding: PaddingValues, approvals: List<Approval>, onDecision: (Approval, ApprovalStatus) -> Unit) {
+private fun ApprovalsScreen(
+    padding: PaddingValues,
+    approvals: List<Approval>,
+    onDecision: (Approval, ApprovalStatus) -> Unit,
+    onDeleteApproval: (Approval) -> Unit,
+) {
     LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             PageHero(
@@ -1260,17 +1292,19 @@ private fun ApprovalsScreen(padding: PaddingValues, approvals: List<Approval>, o
             item { EmptyStateCard("No approval requests", "Agent requests that need your decision will appear here.") }
         } else {
             items(approvals, key = { it.id }) { approval ->
-                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(approval.summary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Text(approval.status.name)
-                        }
-                        Text("${approval.machineName} · ${approval.workspacePath}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(enabled = approval.status == ApprovalStatus.Pending, onClick = { onDecision(approval, ApprovalStatus.Approved) }) { Text("Approve") }
-                            OutlinedButton(enabled = approval.status == ApprovalStatus.Pending, onClick = { onDecision(approval, ApprovalStatus.Denied) }) { Text("Deny") }
+                SwipeToDeleteItem(onDelete = { onDeleteApproval(approval) }) {
+                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(approval.summary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                Text(approval.status.name)
+                            }
+                            Text("${approval.machineName} · ${approval.workspacePath}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Button(enabled = approval.status == ApprovalStatus.Pending, onClick = { onDecision(approval, ApprovalStatus.Approved) }) { Text("Approve") }
+                                OutlinedButton(enabled = approval.status == ApprovalStatus.Pending, onClick = { onDecision(approval, ApprovalStatus.Denied) }) { Text("Deny") }
+                            }
                         }
                     }
                 }
@@ -1287,6 +1321,7 @@ private fun MachinesScreen(
     onPairLink: (String) -> Unit,
     onScanQr: () -> Unit,
     onRefreshMachine: (Machine) -> Unit,
+    onDeleteMachine: (Machine) -> Unit,
 ) {
     var pairingLink by remember { mutableStateOf("") }
 
@@ -1317,10 +1352,45 @@ private fun MachinesScreen(
             item { EmptyStateCard("No machines paired", "Start the bridge, scan the QR code, then test the connection.") }
         } else {
             items(machines, key = { it.id }) { machine ->
-                MachineCard(machine = machine, onRefresh = { onRefreshMachine(machine) })
+                SwipeToDeleteItem(onDelete = { onDeleteMachine(machine) }) {
+                    MachineCard(machine = machine, onRefresh = { onRefreshMachine(machine) })
+                }
             }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeToDeleteItem(onDelete: () -> Unit, content: @Composable () -> Unit) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) {
+                onDelete()
+                true
+            } else {
+                false
+            }
+        },
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = true,
+        backgroundContent = {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(18.dp))
+                    .padding(horizontal = 18.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Text("Delete", color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.SemiBold)
+            }
+        },
+        content = { content() },
+    )
 }
 
 @Composable

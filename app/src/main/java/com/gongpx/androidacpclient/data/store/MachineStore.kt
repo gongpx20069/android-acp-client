@@ -30,6 +30,10 @@ class MachineStore(context: Context) {
         preferences.edit().putString(KEY_MACHINES, JSONArray(next.map { it.toJson() }).toString()).apply()
     }
 
+    fun remove(machineId: String) {
+        replaceAll(load().filterNot { it.id == machineId })
+    }
+
     fun replaceAll(machines: List<Machine>) {
         preferences.edit().putString(KEY_MACHINES, JSONArray(machines.map { it.toJson() }).toString()).apply()
     }

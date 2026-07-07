@@ -132,6 +132,7 @@ class BridgeClient {
                 .put("agentId", agentId)
                 .put("workspacePath", workspacePath)
                 .put("sessionId", sessionId),
+            allowPartialOnFailure = true,
         )
     }
 
@@ -183,8 +184,9 @@ class BridgeClient {
         payload: JSONObject,
         onMessage: (ChatMessage) -> Unit = {},
         onApproval: (BridgeApprovalRequest) -> Unit = {},
+        allowPartialOnFailure: Boolean = false,
     ): Result<List<ChatMessage>> {
-        return sendRawBridgeMessage(machine, payload) { event ->
+        return sendRawBridgeMessage(machine, payload, allowPartialOnFailure = allowPartialOnFailure) { event ->
             if (event.optString("type") == "approval.requested") {
                 event.toApprovalRequest()?.let { request ->
                     mainHandler.post { onApproval(request) }
@@ -207,13 +209,36 @@ class BridgeClient {
         }
     }
 
-    private suspend fun sendRawBridgeMessage(machine: Machine, payload: JSONObject, onEvent: (JSONObject) -> Unit = {}): Result<List<JSONObject>> {
+    private suspend fun sendRawBridgeMessage(
+        machine: Machine,
+        payload: JSONObject,
+        allowPartialOnFailure: Boolean = false,
+        onEvent: (JSONObject) -> Unit = {},
+    ): Result<List<JSONObject>> {
         return suspendCancellableCoroutine { continuation ->
             val requestBuilder = Request.Builder().url(toWebSocketUrl(machine.endpoint, machine.deviceToken))
             machine.connectionHeaders.forEach { (name, value) ->
                 requestBuilder.addHeader(name, value)
             }
             val events = mutableListOf<JSONObject>()
+
+            fun completeWithPartialOrFailure(t: Throwable) {
+                if (!continuation.isActive) return
+                if (allowPartialOnFailure && events.isNotEmpty()) {
+                    continuation.resume(Result.success(events.toList()))
+                } else {
+                    continuation.resume(Result.failure(t.withReadableMessage()))
+                }
+            }
+
+            fun completeOnClose() {
+                if (!continuation.isActive) return
+                if (allowPartialOnFailure && events.isNotEmpty()) {
+                    continuation.resume(Result.success(events.toList()))
+                } else {
+                    continuation.resume(Result.failure(IOException("WebSocket closed before bridge.done")))
+                }
+            }
 
             var socket: WebSocket? = null
             socket = webSocketClient.newWebSocket(
@@ -238,9 +263,11 @@ class BridgeClient {
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                        if (continuation.isActive) {
-                            continuation.resume(Result.failure(t))
-                        }
+                        completeWithPartialOrFailure(t)
+                    }
+
+                    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                        completeOnClose()
                     }
                 },
             )
@@ -464,6 +491,11 @@ class BridgeClient {
     private companion object {
         const val TIMEOUT_MS = 10_000
     }
+}
+
+private fun Throwable.withReadableMessage(): Throwable {
+    val readable = message ?: localizedMessage ?: javaClass.simpleName.ifBlank { "WebSocket connection failed" }
+    return if (message.isNullOrBlank()) IOException(readable, this) else this
 }
 
 private data class ParsedBridgeMessage(

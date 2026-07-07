@@ -255,7 +255,7 @@ private data class AppStrings(
             noReleasesFound = "No releases found.",
             updateAvailable = { "Update $it is available." },
             latestVersion = "You're on the latest version.",
-            updateCheckFailed = { "Update check failed: $it" },
+            updateCheckFailed = { "Update check failed: ${it.orUnknownError()}" },
             checkingForUpdates = "Checking for updates...",
             chats = "Chats",
             approvals = "Approvals",
@@ -272,7 +272,7 @@ private data class AppStrings(
             createChat = "Create Chat",
             loadingSessions = "Loading sessions...",
             loadSessions = "Load sessions",
-            couldNotLoadSessions = { "Could not load sessions: $it" },
+            couldNotLoadSessions = { "Could not load sessions: ${it.orUnknownError()}" },
             noResumableSessions = "No resumable sessions",
             noResumableSessionsForAgent = "This Agent did not return resumable sessions for the selected Machine.",
             openSession = "Open Session",
@@ -316,19 +316,19 @@ private data class AppStrings(
             invalidPairingLink = "Invalid pairing link.",
             waitingBridgeApproval = { "Waiting for bridge approval on $it..." },
             machineOnline = { "$it is online." },
-            pairedHealthFailed = { "Paired, but health check failed: $it" },
-            pairingFailed = { "Pairing failed: $it" },
+            pairedHealthFailed = { "Paired, but health check failed: ${it.orUnknownError()}" },
+            pairingFailed = { "Pairing failed: ${it.orUnknownError()}" },
             machineUnavailable = "Machine is not available.",
             approvalRequired = { "Approval required · $it" },
             approvalRequiredTitle = "Approval required",
-            bridgeWebSocketFailed = { "Bridge WebSocket failed: $it" },
+            bridgeWebSocketFailed = { "Bridge WebSocket failed: ${it.orUnknownError()}" },
             chatCreatedSystem = "Chat created. Workspace is selected per Chat, not at bridge startup.",
             loadingExistingAcpSession = { "Loading existing ACP session $it." },
-            openSessionFailed = { "Open session failed: $it" },
-            resumeFailed = { "Resume failed: $it" },
+            openSessionFailed = { "Open session failed: ${it.orUnknownError()}" },
+            resumeFailed = { "Resume failed: ${it.orUnknownError()}" },
             setModel = "Set model",
-            modelChangeFailed = { "Model change failed: $it" },
-            connectionFailed = { "Connection failed: $it" },
+            modelChangeFailed = { "Model change failed: ${it.orUnknownError()}" },
+            connectionFailed = { "Connection failed: ${it.orUnknownError()}" },
         )
 
         val Chinese = English.copy(
@@ -349,7 +349,7 @@ private data class AppStrings(
             noReleasesFound = "未找到 release。",
             updateAvailable = { "发现更新 $it。" },
             latestVersion = "当前已是最新版本。",
-            updateCheckFailed = { "更新检查失败：$it" },
+            updateCheckFailed = { "更新检查失败：${it.orUnknownErrorZh()}" },
             checkingForUpdates = "正在检查更新...",
             newChat = "新建 Chat",
             newSession = "新建 session",
@@ -363,7 +363,7 @@ private data class AppStrings(
             createChat = "创建 Chat",
             loadingSessions = "正在加载 sessions...",
             loadSessions = "加载 sessions",
-            couldNotLoadSessions = { "无法加载 sessions：$it" },
+            couldNotLoadSessions = { "无法加载 sessions：${it.orUnknownErrorZh()}" },
             noResumableSessions = "没有可恢复 sessions",
             noResumableSessionsForAgent = "所选 Machine 上的 Agent 没有返回可恢复 sessions。",
             openSession = "打开 Session",
@@ -406,22 +406,26 @@ private data class AppStrings(
             invalidPairingLink = "无效的配对 link。",
             waitingBridgeApproval = { "正在等待 $it 上的 bridge 确认..." },
             machineOnline = { "$it 已在线。" },
-            pairedHealthFailed = { "已配对，但健康检查失败：$it" },
-            pairingFailed = { "配对失败：$it" },
+            pairedHealthFailed = { "已配对，但健康检查失败：${it.orUnknownErrorZh()}" },
+            pairingFailed = { "配对失败：${it.orUnknownErrorZh()}" },
             machineUnavailable = "Machine 不可用。",
             approvalRequired = { "需要 Approval · $it" },
             approvalRequiredTitle = "需要 Approval",
-            bridgeWebSocketFailed = { "Bridge WebSocket 失败：$it" },
+            bridgeWebSocketFailed = { "Bridge WebSocket 失败：${it.orUnknownErrorZh()}" },
             chatCreatedSystem = "Chat 已创建。Workspace 按 Chat 选择，不绑定在 bridge 启动时。",
             loadingExistingAcpSession = { "正在加载已有 ACP session $it。" },
-            openSessionFailed = { "打开 session 失败：$it" },
-            resumeFailed = { "恢复失败：$it" },
+            openSessionFailed = { "打开 session 失败：${it.orUnknownErrorZh()}" },
+            resumeFailed = { "恢复失败：${it.orUnknownErrorZh()}" },
             setModel = "设置 model",
-            modelChangeFailed = { "Model 修改失败：$it" },
-            connectionFailed = { "连接失败：$it" },
+            modelChangeFailed = { "Model 修改失败：${it.orUnknownErrorZh()}" },
+            connectionFailed = { "连接失败：${it.orUnknownErrorZh()}" },
         )
     }
 }
+
+private fun String?.orUnknownError(): String = this?.takeIf { it.isNotBlank() } ?: "Unknown error"
+
+private fun String?.orUnknownErrorZh(): String = this?.takeIf { it.isNotBlank() } ?: "未知错误"
 
 private fun AppLanguageMode.resolveStrings(): AppStrings {
     return when (this) {

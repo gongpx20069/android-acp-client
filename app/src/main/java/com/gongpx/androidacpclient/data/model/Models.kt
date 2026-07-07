@@ -54,6 +54,7 @@ data class Chat(
     val agentId: String,
     val agentName: String,
     val createdAtMillis: Long,
+    val acpSessionId: String? = null,
     val messages: List<ChatMessage> = emptyList(),
 )
 

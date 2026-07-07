@@ -46,6 +46,7 @@ class ChatStore(context: Context) {
             .put("agentId", agentId)
             .put("agentName", agentName)
             .put("createdAtMillis", createdAtMillis)
+            .put("acpSessionId", acpSessionId)
             .put("messages", JSONArray(messages.map { it.toJson() }))
     }
 
@@ -61,6 +62,7 @@ class ChatStore(context: Context) {
             agentId = getString("agentId"),
             agentName = getString("agentName"),
             createdAtMillis = getLong("createdAtMillis"),
+            acpSessionId = optString("acpSessionId").ifBlank { null },
             messages = optJSONArray("messages").orEmpty().mapJsonObjects { it.toChatMessage() },
         )
     }

@@ -115,6 +115,11 @@ private enum class AppTab(val label: String, val icon: String) {
     Settings("Settings", "⚙"),
 }
 
+private enum class NewChatMode(val label: String) {
+    NewSession("New session"),
+    ExistingSession("Existing session"),
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
@@ -177,6 +182,53 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         upsertChat(chat)
         selectedChatId = chat.id
         selectedTab = AppTab.Chats
+    }
+
+    fun openExistingSession(machine: Machine, agent: Agent, session: AgentSessionInfo) {
+        val path = session.cwd?.ifBlank { null } ?: "~"
+        val workspaceName = if (path == "~") {
+            "Home"
+        } else {
+            path.trimEnd('\\', '/').substringAfterLast('\\').substringAfterLast('/').ifBlank { path }
+        }
+        val chat = Chat(
+            id = "chat_" + UUID.randomUUID(),
+            title = session.title ?: "$workspaceName · ${agent.displayName}",
+            machineId = machine.id,
+            machineName = machine.displayName,
+            workspaceId = workspaceName,
+            workspaceName = workspaceName,
+            workspacePath = path,
+            agentId = agent.id,
+            agentName = agent.displayName,
+            createdAtMillis = System.currentTimeMillis(),
+            acpSessionId = session.sessionId,
+            messages = listOf(
+                ChatMessage(
+                    role = MessageRole.System,
+                    text = "Loading existing ACP session ${session.sessionId}.",
+                    timestampMillis = System.currentTimeMillis(),
+                ),
+            ),
+        )
+        upsertChat(chat)
+        selectedChatId = chat.id
+        selectedTab = AppTab.Chats
+        scope.launch {
+            bridgeClient.loadSession(machine, chat.id, agent.id, path, session.sessionId)
+                .onSuccess { events ->
+                    upsertChat(chat.copy(messages = chat.messages + events))
+                }
+                .onFailure {
+                    upsertChat(chat.withMessage(MessageRole.System, "Open session failed: ${it.message}"))
+                }
+        }
+    }
+
+    fun loadExistingSessions(machine: Machine, agent: Agent, onResult: (Result<List<AgentSessionInfo>>) -> Unit) {
+        scope.launch {
+            onResult(bridgeClient.listSessions(machine, agent.id, ""))
+        }
     }
 
     fun addApproval(chat: Chat, request: BridgeApprovalRequest? = null) {
@@ -390,6 +442,8 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                             chats = chats,
                             selectedChatId = selectedChatId,
                             onCreateChat = ::createChat,
+                            onOpenExistingSession = ::openExistingSession,
+                            onLoadExistingSessions = ::loadExistingSessions,
                             onOpenChat = { selectedChatId = it.id },
                             onBackToList = { selectedChatId = null },
                             onResume = ::showResumeDialog,
@@ -545,6 +599,8 @@ private fun ChatsScreen(
     chats: List<Chat>,
     selectedChatId: String?,
     onCreateChat: (Machine, String, Agent) -> Unit,
+    onOpenExistingSession: (Machine, Agent, AgentSessionInfo) -> Unit,
+    onLoadExistingSessions: (Machine, Agent, (Result<List<AgentSessionInfo>>) -> Unit) -> Unit,
     onOpenChat: (Chat) -> Unit,
     onBackToList: () -> Unit,
     onResume: (Chat) -> Unit,
@@ -577,6 +633,11 @@ private fun ChatsScreen(
     var workspacePath by remember { mutableStateOf("") }
     var selectedAgentId by remember(selectedMachine) { mutableStateOf(selectedMachine?.agents?.firstOrNull()?.id.orEmpty()) }
     val selectedAgent = selectedMachine?.agents?.firstOrNull { it.id == selectedAgentId } ?: selectedMachine?.agents?.firstOrNull()
+    var newChatMode by remember { mutableStateOf(NewChatMode.NewSession) }
+    var existingSessions by remember { mutableStateOf<List<AgentSessionInfo>?>(null) }
+    var existingSessionsLoading by remember { mutableStateOf(false) }
+    var existingSessionsError by remember { mutableStateOf<String?>(null) }
+    var selectedExistingSessionId by remember { mutableStateOf<String?>(null) }
 
     var newChatExpanded by remember { mutableStateOf(chats.isEmpty()) }
     LaunchedEffect(chats.isEmpty()) {
@@ -604,6 +665,19 @@ private fun ChatsScreen(
                     }
                     if (newChatExpanded) {
                         Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            NewChatMode.entries.forEach { mode ->
+                                FilterChip(
+                                    selected = newChatMode == mode,
+                                    onClick = {
+                                        newChatMode = mode
+                                        existingSessionsError = null
+                                    },
+                                    label = { Text(mode.label) },
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
                         Text("Machine", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             machines.forEach { machine ->
@@ -622,14 +696,6 @@ private fun ChatsScreen(
                             }
                         }
                         Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = workspacePath,
-                            onValueChange = { workspacePath = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Remote workspace path (optional)") },
-                            placeholder = { Text("Leave blank for remote home, or enter D:\\repos\\project-a") },
-                        )
-                        Spacer(Modifier.height(8.dp))
                         Text("Agent", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             selectedMachine?.agents.orEmpty().forEach { agent ->
@@ -644,12 +710,76 @@ private fun ChatsScreen(
                                 Text("No agent discovered on this machine yet.", color = MaterialTheme.colorScheme.onPrimaryContainer)
                             }
                         }
-                        Spacer(Modifier.height(10.dp))
-                        Button(
-                            enabled = selectedMachine != null && selectedAgent != null,
-                            onClick = { onCreateChat(selectedMachine!!, workspacePath, selectedAgent!!) },
-                        ) {
-                            Text("Create Chat")
+                        if (newChatMode == NewChatMode.NewSession) {
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = workspacePath,
+                                onValueChange = { workspacePath = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Remote workspace path (optional)") },
+                                placeholder = { Text("Leave blank for remote home, or enter D:\\repos\\project-a") },
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Button(
+                                enabled = selectedMachine != null && selectedAgent != null,
+                                onClick = { onCreateChat(selectedMachine!!, workspacePath, selectedAgent!!) },
+                            ) {
+                                Text("Create Chat")
+                            }
+                        } else {
+                            Spacer(Modifier.height(10.dp))
+                            Button(
+                                enabled = selectedMachine != null && selectedAgent != null && !existingSessionsLoading,
+                                onClick = {
+                                    existingSessionsLoading = true
+                                    existingSessionsError = null
+                                    existingSessions = null
+                                    selectedExistingSessionId = null
+                                    onLoadExistingSessions(selectedMachine!!, selectedAgent!!) { result ->
+                                        existingSessionsLoading = false
+                                        result
+                                            .onSuccess {
+                                                existingSessions = it
+                                                selectedExistingSessionId = it.firstOrNull()?.sessionId
+                                            }
+                                            .onFailure {
+                                                existingSessions = emptyList()
+                                                existingSessionsError = it.message
+                                            }
+                                    }
+                                },
+                            ) {
+                                Text(if (existingSessionsLoading) "Loading sessions..." else "Load sessions")
+                            }
+                            existingSessionsError?.let {
+                                Spacer(Modifier.height(8.dp))
+                                Text("Could not load sessions: $it", color = MaterialTheme.colorScheme.error)
+                            }
+                            existingSessions?.let { sessions ->
+                                Spacer(Modifier.height(8.dp))
+                                if (sessions.isEmpty()) {
+                                    EmptyStateCard("No resumable sessions", "This agent did not return resumable sessions for the selected machine.")
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        sessions.take(12).forEach { session ->
+                                            SelectableOptionCard(
+                                                selected = selectedExistingSessionId == session.sessionId,
+                                                title = session.title ?: session.sessionId,
+                                                subtitle = listOfNotNull(session.cwd, session.updatedAt).joinToString(" · "),
+                                                onClick = { selectedExistingSessionId = session.sessionId },
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(10.dp))
+                                    val selectedSession = sessions.firstOrNull { it.sessionId == selectedExistingSessionId }
+                                    Button(
+                                        enabled = selectedMachine != null && selectedAgent != null && selectedSession != null,
+                                        onClick = { onOpenExistingSession(selectedMachine!!, selectedAgent!!, selectedSession!!) },
+                                    ) {
+                                        Text("Open Session")
+                                    }
+                                }
+                            }
                         }
                     }
                 }

@@ -14,7 +14,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - Pairing token redemption through the bridge.
 - Secure machine storage using AndroidX Security encrypted preferences.
 - Health, agents, and workspaces loading from the bridge.
-- New Chat form with machine, per-chat workspace path, and agent selection.
+- New Chat form with two modes: create a new ACP session, or open an existing resumable ACP session returned by the selected machine and agent.
 - Chat list and WhatsApp-style chat detail view with full conversation history.
 - Opening a chat automatically scrolls to the newest message.
 - Fixed bottom prompt box for sending chat messages.
@@ -82,7 +82,9 @@ The app maps these bridge/ACP events:
 
 ## Workspace Selection
 
-The bridge does not bind a workspace at startup. Workspace is selected per chat in the New Chat form by entering the remote absolute project path. Leaving the field blank uses `~`, which the bridge resolves to the remote machine user's home directory. The selected path maps to ACP `cwd` when the bridge creates the Copilot ACP session.
+The bridge does not bind a workspace at startup. In New Session mode, workspace is selected per chat in the New Chat form by entering the remote absolute project path. Leaving the field blank uses `~`, which the bridge resolves to the remote machine user's home directory. The selected path maps to ACP `cwd` when the bridge creates the Copilot ACP session.
+
+In Existing Session mode, the user does not enter a workspace. AgentLink asks the selected machine and agent for all resumable sessions with ACP `session/list {}`. The selected session's own `cwd` becomes the local chat workspace display and is used when loading that session.
 
 The workspace does not have to be a Git repository, but Copilot's coding workflows work best inside a repository. If a parent folder such as `D:\peixianws` is selected instead of `D:\peixianws\android-agent-link`, Git-aware commands may report that the current directory is not a Git repository.
 

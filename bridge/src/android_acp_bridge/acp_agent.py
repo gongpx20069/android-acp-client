@@ -151,10 +151,12 @@ class AcpAgentSession:
         return updates
 
     def list_sessions(self, workspace_path: str) -> list[dict[str, Any]]:
-        workspace = _resolve_workspace(workspace_path)
+        params: dict[str, Any] = {}
+        if workspace_path.strip() and workspace_path.strip() != "~":
+            params["cwd"] = str(_resolve_workspace(workspace_path))
         result, _updates = self._request(
             "session/list",
-            {"cwd": str(workspace)},
+            params,
             timeout_seconds=60,
         )
         sessions = result.get("sessions", [])

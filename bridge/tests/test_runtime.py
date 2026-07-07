@@ -138,6 +138,19 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(responses[0]["sessions"][0]["sessionId"], "sess_1")
         self.assertEqual(responses[-1]["type"], "bridge.done")
 
+    def test_session_list_allows_empty_workspace_filter(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+
+        responses = runtime.websocket_responses({"type": "session.list", "agentId": "copilot-cli", "workspacePath": ""})
+
+        self.assertEqual(responses[0]["sessions"][0]["cwd"], "")
+        self.assertEqual(responses[-1]["type"], "bridge.done")
+
     def test_session_load_websocket_response_streams_updates(self) -> None:
         runtime = BridgeRuntime(
             config=BridgeConfig(machine_name="devbox"),

@@ -1332,7 +1332,7 @@ private fun Chat.configOptions(): List<ConfigOption> {
                     name = item.optString("name").ifBlank { item.getString("value") },
                     description = item.optString("description").ifBlank { null },
                 )
-            )
+            }
         )
     }
 }

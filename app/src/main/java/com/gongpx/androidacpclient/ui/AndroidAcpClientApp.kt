@@ -84,6 +84,7 @@ import com.gongpx.androidacpclient.data.model.AgentSessionInfo
 import com.gongpx.androidacpclient.data.model.Approval
 import com.gongpx.androidacpclient.data.model.ApprovalStatus
 import com.gongpx.androidacpclient.data.model.AvailableCommand
+import com.gongpx.androidacpclient.data.model.BridgeApprovalRequest
 import com.gongpx.androidacpclient.data.model.Chat
 import com.gongpx.androidacpclient.data.model.ChatMessage
 import com.gongpx.androidacpclient.data.model.ChatMessageKind
@@ -178,21 +179,26 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         selectedTab = AppTab.Chats
     }
 
-    fun addApproval(chat: Chat) {
+    fun addApproval(chat: Chat, request: BridgeApprovalRequest? = null) {
         approvals.add(
             Approval(
-                id = "approval_" + UUID.randomUUID(),
+                id = request?.approvalId ?: "approval_" + UUID.randomUUID(),
                 chatId = chat.id,
                 chatTitle = chat.title,
                 machineId = chat.machineId,
                 machineName = chat.machineName,
                 workspacePath = chat.workspacePath,
-                action = "run_command",
-                summary = "Run test command in ${chat.workspacePath}",
+                action = request?.action ?: "run_command",
+                summary = request?.summary ?: "Run test command in ${chat.workspacePath}",
                 createdAtMillis = System.currentTimeMillis(),
             ),
         )
         selectedTab = AppTab.Approvals
+    }
+
+    fun appendChatEvent(chatId: String, message: ChatMessage) {
+        val current = chats.firstOrNull { it.id == chatId } ?: return
+        upsertChat(current.copy(messages = current.messages.mergeMessage(message)))
     }
 
     fun updateApproval(approval: Approval, status: ApprovalStatus) {
@@ -396,9 +402,31 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                     val updated = chat.withMessage(MessageRole.User, message)
                                     upsertChat(updated)
                                     scope.launch {
-                                        bridgeClient.sendChatPrompt(machine, chat.id, chat.agentId, chat.workspacePath, message)
-                                            .onSuccess { events ->
-                                                upsertChat(updated.copy(messages = updated.messages + events))
+                                        bridgeClient.sendChatPrompt(
+                                            machine = machine,
+                                            chatId = chat.id,
+                                            agentId = chat.agentId,
+                                            workspacePath = chat.workspacePath,
+                                            text = message,
+                                            onMessage = { event -> appendChatEvent(chat.id, event) },
+                                            onApproval = { request ->
+                                                appendChatEvent(
+                                                    chat.id,
+                                                    ChatMessage(
+                                                        role = MessageRole.Agent,
+                                                        text = "Approval required · ${request.summary}",
+                                                        timestampMillis = System.currentTimeMillis(),
+                                                        kind = ChatMessageKind.Activity,
+                                                        title = "Approval required",
+                                                        details = request.details,
+                                                        activityId = request.approvalId,
+                                                    ),
+                                                )
+                                                addApproval(chat, request)
+                                            },
+                                        )
+                                            .onSuccess {
+                                                // Stream callbacks update the timeline while the prompt is running.
                                             }
                                             .onFailure {
                                                 upsertChat(updated.withMessage(MessageRole.System, "Bridge WebSocket failed: ${it.message}"))
@@ -1382,6 +1410,26 @@ private fun PlaceholderScreen(padding: PaddingValues, title: String, body: Strin
 
 private fun Chat.withMessage(role: MessageRole, text: String): Chat {
     return copy(messages = messages + ChatMessage(role, text, System.currentTimeMillis()))
+}
+
+private fun List<ChatMessage>.mergeMessage(message: ChatMessage): List<ChatMessage> {
+    val streamId = message.activityId ?: return this + message
+    val existingIndex = indexOfFirst { it.activityId == streamId }
+    if (existingIndex < 0) return this + message
+    return toMutableList().also { current ->
+        val existing = current[existingIndex]
+        current[existingIndex] = when {
+            message.kind == ChatMessageKind.Activity && existing.kind == ChatMessageKind.Activity -> {
+                if (existing.title == "Thought" && message.title == "Thought") {
+                    existing.copy(details = listOfNotNull(existing.details, message.details).joinToString(""))
+                } else {
+                    message
+                }
+            }
+            message.kind == ChatMessageKind.Message && existing.kind == ChatMessageKind.Message -> existing.copy(text = existing.text + message.text)
+            else -> message
+        }
+    }
 }
 
 private fun Chat.withActivity(title: String, summary: String, details: String): Chat {

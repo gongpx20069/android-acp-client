@@ -121,7 +121,13 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                 payload = json.loads(message)
             except json.JSONDecodeError:
                 payload = message
-            for response in self.server.runtime.websocket_responses(payload):
+            def emit(response: dict[str, Any]) -> None:
+                try:
+                    _write_websocket_text(self.wfile, json.dumps(response, separators=(",", ":")))
+                except OSError:
+                    raise
+
+            for response in self.server.runtime.websocket_responses(payload, emit=emit):
                 try:
                     _write_websocket_text(self.wfile, json.dumps(response, separators=(",", ":")))
                 except OSError:

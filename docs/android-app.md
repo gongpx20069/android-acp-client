@@ -24,7 +24,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - Built-in `allow-all` opens an on/off picker when the ACP agent exposes the `allow_all` session config option.
 - Agent/system message bubbles render basic Markdown: headings, bullets, quotes, fenced code blocks, bold, italic, inline code, and link-style text.
 - Collapsible agent activity cards for ACP `tool_call` and `tool_call_update` events.
-- Approval list with approve/deny actions.
+- Approval list with approve/deny actions backed by ACP `session/request_permission`.
 - Automatic update checks on app startup and manual update checks from Settings.
 
 GitHub Copilot CLI ACP execution is wired through the bridge when `copilot --acp` is available on the developer machine. The chat shell sends prompts through the bridge WebSocket and displays ACP `session/update` responses as agent messages and expandable activity cards. Claude Code requires the `claude` CLI to be installed and expose an ACP server command.
@@ -97,6 +97,10 @@ AgentLink displays advertised commands as chips without the slash prefix. Tappin
 `model` is also a built-in AgentLink chip. It appears after the agent sends a `config_option_update` containing a select option with `id == "model"` or `category == "model"`. Selecting a model sends ACP `session/set_config_option` through the bridge and updates the picker with the returned `configOptions`.
 
 `allow-all` is a built-in AgentLink chip backed by the ACP `allow_all` config option. It opens a small on/off picker and sends ACP `session/set_config_option` when changed.
+
+## Approval Flow
+
+When the ACP agent sends `session/request_permission`, the bridge immediately emits `approval.requested` to Android and pauses the ACP response. AgentLink adds the request to the Approvals tab. Approving or denying sends `approval.decide` back to the bridge, which resolves the pending ACP permission request with the selected allow/reject option.
 
 ## Validation
 

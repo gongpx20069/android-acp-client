@@ -7,7 +7,7 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 class AcpAgentError(RuntimeError):
@@ -22,15 +22,19 @@ class AcpPromptRequest:
     prompt: str
 
 
+PermissionCallback = Callable[[dict[str, Any]], str]
+
+
 class AcpAgentManager:
     def __init__(self) -> None:
         self._sessions: dict[str, AcpAgentSession] = {}
 
-    def prompt(self, request: AcpPromptRequest) -> list[dict[str, Any]]:
+    def prompt(self, request: AcpPromptRequest, permission_callback: PermissionCallback | None = None) -> list[dict[str, Any]]:
         session = self._sessions.get(request.chat_id)
         if session is None:
             session = AcpAgentSession.start(request.agent_id, request.workspace_path)
             self._sessions[request.chat_id] = session
+        session.permission_callback = permission_callback
         return session.prompt(request.prompt)
 
     def list_sessions(self, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
@@ -61,6 +65,7 @@ class AcpAgentSession:
         self._output_queue = output_queue
         self._session_id = session_id
         self._next_id = 3
+        self.permission_callback: PermissionCallback | None = None
 
     @classmethod
     def start(cls, agent_id: str, workspace_path: str) -> AcpAgentSession:
@@ -216,10 +221,13 @@ class AcpAgentSession:
         request_id = message.get("id")
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
         options = params.get("options") if isinstance(params, dict) else []
-        option_id = "allow-once"
-        if isinstance(options, list) and options:
-            allow = next((item for item in options if isinstance(item, dict) and str(item.get("kind", "")).startswith("allow")), None)
-            option_id = str((allow or options[0]).get("optionId", option_id))
+        if self.permission_callback is not None:
+            option_id = self.permission_callback(message)
+        else:
+            option_id = "allow-once"
+            if isinstance(options, list) and options:
+                allow = next((item for item in options if isinstance(item, dict) and str(item.get("kind", "")).startswith("allow")), None)
+                option_id = str((allow or options[0]).get("optionId", option_id))
         self._write_json({"jsonrpc": "2.0", "id": request_id, "result": {"outcome": {"outcome": "selected", "optionId": option_id}}})
 
     def _write_json(self, message: dict[str, Any]) -> None:

@@ -298,20 +298,32 @@ Bridge sends:
 
 ### Approval Request
 
-Bridge sends:
+Bridge sends this when an ACP agent calls `session/request_permission`:
 
 ```json
 {
   "type": "approval.requested",
   "approvalId": "approval_456",
   "chatId": "chat_123",
-  "riskLevel": "medium",
   "action": "run_command",
   "summary": "Run Gradle tests",
   "details": {
-    "command": ".\\gradlew testDebugUnitTest",
-    "cwd": "D:\\repos\\android-agent-link"
-  }
+    "toolCallId": "tool_abc",
+    "title": "Run Gradle tests",
+    "kind": "execute"
+  },
+  "options": [
+    {
+      "optionId": "allow-once",
+      "name": "Allow once",
+      "kind": "allow_once"
+    },
+    {
+      "optionId": "reject-once",
+      "name": "Reject",
+      "kind": "reject_once"
+    }
+  ]
 }
 ```
 
@@ -324,6 +336,8 @@ Android responds:
   "decision": "approved"
 }
 ```
+
+The bridge waits for this response and then replies to the ACP `session/request_permission` request using the matching allow/reject option.
 
 ## Contract Rules
 

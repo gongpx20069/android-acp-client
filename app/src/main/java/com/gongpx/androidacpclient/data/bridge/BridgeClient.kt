@@ -1,7 +1,10 @@
 package com.gongpx.androidacpclient.data.bridge
 
+import android.os.Handler
+import android.os.Looper
 import com.gongpx.androidacpclient.data.model.Agent
 import com.gongpx.androidacpclient.data.model.AgentSessionInfo
+import com.gongpx.androidacpclient.data.model.BridgeApprovalRequest
 import com.gongpx.androidacpclient.data.model.ChatMessage
 import com.gongpx.androidacpclient.data.model.ChatMessageKind
 import com.gongpx.androidacpclient.data.model.ConnectionState
@@ -27,6 +30,7 @@ import org.json.JSONObject
 
 class BridgeClient {
     private val webSocketClient = OkHttpClient()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     suspend fun redeemPairing(payload: PairingPayload): Result<Machine> = withContext(Dispatchers.IO) {
         runCatching {
@@ -72,7 +76,15 @@ class BridgeClient {
         }
     }
 
-    suspend fun sendChatPrompt(machine: Machine, chatId: String, agentId: String, workspacePath: String, text: String): Result<List<ChatMessage>> {
+    suspend fun sendChatPrompt(
+        machine: Machine,
+        chatId: String,
+        agentId: String,
+        workspacePath: String,
+        text: String,
+        onMessage: (ChatMessage) -> Unit = {},
+        onApproval: (BridgeApprovalRequest) -> Unit = {},
+    ): Result<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
@@ -81,6 +93,8 @@ class BridgeClient {
                 .put("agentId", agentId)
                 .put("workspacePath", workspacePath)
                 .put("content", text),
+            onMessage = onMessage,
+            onApproval = onApproval,
         )
     }
 
@@ -164,19 +178,36 @@ class BridgeClient {
         return connection.useJsonResponse()
     }
 
-    private suspend fun sendBridgeMessage(machine: Machine, payload: JSONObject): Result<List<ChatMessage>> {
-        return sendRawBridgeMessage(machine, payload).map { events ->
+    private suspend fun sendBridgeMessage(
+        machine: Machine,
+        payload: JSONObject,
+        onMessage: (ChatMessage) -> Unit = {},
+        onApproval: (BridgeApprovalRequest) -> Unit = {},
+    ): Result<List<ChatMessage>> {
+        return sendRawBridgeMessage(machine, payload) { event ->
+            if (event.optString("type") == "approval.requested") {
+                event.toApprovalRequest()?.let { request ->
+                    mainHandler.post { onApproval(request) }
+                }
+            } else {
+                parseBridgeMessage(event.toString()).message?.let { message ->
+                    mainHandler.post { onMessage(message) }
+                }
+            }
+        }.map { events ->
             val messages = mutableListOf<ChatMessage>()
             events.forEach { event ->
-                parseBridgeMessage(event.toString()).message?.let { message ->
-                    mergeStreamingMessage(messages, message)
+                if (event.optString("type") != "approval.requested") {
+                    parseBridgeMessage(event.toString()).message?.let { message ->
+                        mergeStreamingMessage(messages, message)
+                    }
                 }
             }
             messages.toList()
         }
     }
 
-    private suspend fun sendRawBridgeMessage(machine: Machine, payload: JSONObject): Result<List<JSONObject>> {
+    private suspend fun sendRawBridgeMessage(machine: Machine, payload: JSONObject, onEvent: (JSONObject) -> Unit = {}): Result<List<JSONObject>> {
         return suspendCancellableCoroutine { continuation ->
             val requestBuilder = Request.Builder().url(toWebSocketUrl(machine.endpoint, machine.deviceToken))
             machine.connectionHeaders.forEach { (name, value) ->
@@ -201,7 +232,9 @@ class BridgeClient {
                             webSocket.close(1000, "done")
                             return
                         }
-                        events.add(json ?: JSONObject().put("type", "bridge.text").put("text", text))
+                        val event = json ?: JSONObject().put("type", "bridge.text").put("text", text)
+                        events.add(event)
+                        onEvent(event)
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -286,6 +319,16 @@ class BridgeClient {
                     kind = ChatMessageKind.ConfigUpdate,
                     details = optJSONArray("configOptions")?.toString().orEmpty(),
                     activityId = "config_options",
+                )
+            }
+
+            private fun JSONObject.toApprovalRequest(): BridgeApprovalRequest? {
+                val approvalId = optString("approvalId").ifBlank { return null }
+                return BridgeApprovalRequest(
+                    approvalId = approvalId,
+                    action = optString("action").ifBlank { "tool_permission" },
+                    summary = optString("summary").ifBlank { "Agent requests permission" },
+                    details = optJSONObject("details")?.toString(2),
                 )
             }
             "available_commands_update" -> {

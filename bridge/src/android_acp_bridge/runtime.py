@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import secrets
+import threading
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from . import __version__
 from .acp_agent import AcpAgentError, AcpAgentManager, AcpPromptRequest
@@ -26,8 +27,15 @@ class InvalidPairingTokenError(Exception):
     pass
 
 
+@dataclass
+class PendingApproval:
+    options: list[dict[str, Any]]
+    condition: threading.Condition
+    decision: str | None = None
+
+
 class AgentManager(Protocol):
-    def prompt(self, request: AcpPromptRequest) -> list[dict[str, Any]]:
+    def prompt(self, request: AcpPromptRequest, permission_callback: Callable[[dict[str, Any]], str] | None = None) -> list[dict[str, Any]]:
         ...
 
     def list_sessions(self, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
@@ -53,6 +61,8 @@ class BridgeRuntime:
         self.require_local_pairing_confirmation = require_local_pairing_confirmation
         self.device_tokens: set[str] = set()
         self.agent_manager = agent_manager or AcpAgentManager()
+        self._pending_approvals: dict[str, PendingApproval] = {}
+        self._approval_lock = threading.Lock()
 
     def health_response(self) -> dict[str, Any]:
         return {"status": "ok", "bridgeVersion": __version__}
@@ -93,13 +103,13 @@ class BridgeRuntime:
     def is_device_token_valid(self, token: str) -> bool:
         return token in self.device_tokens
 
-    def websocket_responses(self, payload: Any) -> list[dict[str, Any]]:
+    def websocket_responses(self, payload: Any, emit: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]]:
         if not isinstance(payload, dict):
             return [{"type": "bridge.echo", "payload": payload}, {"type": "bridge.done"}]
 
         message_type = payload.get("type")
         if message_type == "chat.prompt":
-            return self._chat_prompt_updates(payload)
+            return self._chat_prompt_updates(payload, emit)
         if message_type == "session.list":
             return self._session_list_response(payload)
         if message_type == "session.load":
@@ -121,7 +131,7 @@ class BridgeRuntime:
             return False
         return answer.strip().lower() in {"y", "yes"}
 
-    def _chat_prompt_updates(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    def _chat_prompt_updates(self, payload: dict[str, Any], emit: Callable[[dict[str, Any]], None] | None) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
         prompt = _string_or_default(payload.get("content"), "")
         agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
@@ -133,7 +143,8 @@ class BridgeRuntime:
                     agent_id=agent_id,
                     workspace_path=workspace_path,
                     prompt=prompt,
-                )
+                ),
+                permission_callback=lambda message: self._request_permission(chat_id, message, emit),
             )
         except AcpAgentError as exc:
             updates = [
@@ -157,6 +168,7 @@ class BridgeRuntime:
     def _approval_decision_updates(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         approval_id = _string_or_default(payload.get("approvalId"), "unknown-approval")
         decision = _string_or_default(payload.get("decision"), "unknown")
+        resolved = self._resolve_approval(approval_id, decision)
         return [
             {
                 "type": "session/update",
@@ -165,8 +177,8 @@ class BridgeRuntime:
                     "toolCallId": approval_id,
                     "title": "Approval decision",
                     "kind": "approval",
-                    "status": decision,
-                    "content": {"decision": decision},
+                    "status": "completed" if resolved else "failed",
+                    "content": {"decision": decision, "resolved": resolved},
                 },
             },
             {"type": "bridge.done"},
@@ -206,6 +218,46 @@ class BridgeRuntime:
         for update in updates:
             update.setdefault("chatId", chat_id)
         return updates + [{"type": "bridge.done", "chatId": chat_id}]
+
+    def _request_permission(self, chat_id: str, message: dict[str, Any], emit: Callable[[dict[str, Any]], None] | None) -> str:
+        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        options = params.get("options") if isinstance(params, dict) and isinstance(params.get("options"), list) else []
+        tool_call = params.get("toolCall") if isinstance(params, dict) and isinstance(params.get("toolCall"), dict) else {}
+        approval_id = "approval_" + secrets.token_urlsafe(12)
+        pending = PendingApproval(options=options, condition=threading.Condition())
+        with self._approval_lock:
+            self._pending_approvals[approval_id] = pending
+
+        requested = {
+            "type": "approval.requested",
+            "approvalId": approval_id,
+            "chatId": chat_id,
+            "action": _string_or_default(tool_call.get("kind"), "tool_permission"),
+            "summary": _string_or_default(tool_call.get("title"), "Agent requests permission"),
+            "details": tool_call,
+            "options": options,
+        }
+        if emit is not None:
+            emit(requested)
+
+        with pending.condition:
+            pending.condition.wait(timeout=300)
+            decision = pending.decision or "denied"
+
+        with self._approval_lock:
+            self._pending_approvals.pop(approval_id, None)
+
+        return _select_permission_option(options, decision)
+
+    def _resolve_approval(self, approval_id: str, decision: str) -> bool:
+        with self._approval_lock:
+            pending = self._pending_approvals.get(approval_id)
+        if pending is None:
+            return False
+        with pending.condition:
+            pending.decision = decision
+            pending.condition.notify_all()
+        return True
 
     def _session_set_config_option_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
@@ -252,3 +304,12 @@ def parse_device_info(value: Any) -> DeviceInfo | None:
 
 def _string_or_default(value: Any, default: str) -> str:
     return value if isinstance(value, str) else default
+
+
+def _select_permission_option(options: list[dict[str, Any]], decision: str) -> str:
+    target_prefix = "allow" if decision == "approved" else "reject"
+    fallback = "allow-once" if decision == "approved" else "reject-once"
+    match = next((item for item in options if isinstance(item, dict) and str(item.get("kind", "")).startswith(target_prefix)), None)
+    if match is None and options:
+        match = options[0]
+    return str((match or {}).get("optionId", fallback))

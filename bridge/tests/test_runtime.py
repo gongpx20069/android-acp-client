@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import threading
+import time
 from pathlib import Path
 
 from android_acp_bridge.acp_agent import AcpPromptRequest, _resolve_workspace
@@ -163,9 +165,66 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(responses[0]["update"]["configOptions"][0]["currentValue"], "gpt-5.4")
         self.assertEqual(responses[-1]["type"], "bridge.done")
 
+    def test_permission_request_emits_approval_and_waits_for_decision(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+        emitted: list[dict] = []
+        responses_holder: list[list[dict]] = []
+
+        def run_prompt() -> None:
+            responses_holder.append(
+                runtime.websocket_responses(
+                    {"type": "chat.prompt", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "needs approval"},
+                    emit=emitted.append,
+                )
+            )
+
+        thread = threading.Thread(target=run_prompt)
+        thread.start()
+        for _ in range(100):
+            if emitted:
+                break
+            time.sleep(0.01)
+        self.assertEqual(emitted[0]["type"], "approval.requested")
+        runtime.websocket_responses({"type": "approval.decide", "approvalId": emitted[0]["approvalId"], "decision": "approved"})
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(responses_holder[0][0]["update"]["status"], "allow-once")
+
 
 class FakeAgentManager:
-    def prompt(self, request: AcpPromptRequest):
+    def prompt(self, request: AcpPromptRequest, permission_callback=None):
+        if permission_callback is not None and request.prompt == "needs approval":
+            option_id = permission_callback(
+                {
+                    "params": {
+                        "toolCall": {
+                            "toolCallId": "tool_permission",
+                            "title": "Run command",
+                            "kind": "execute",
+                        },
+                        "options": [
+                            {"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
+                            {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"},
+                        ],
+                    }
+                }
+            )
+            return [
+                {
+                    "type": "session/update",
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "tool_permission",
+                        "status": option_id,
+                    },
+                }
+            ]
         return [
             {
                 "type": "session/update",

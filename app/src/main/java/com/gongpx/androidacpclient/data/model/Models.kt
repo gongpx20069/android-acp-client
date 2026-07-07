@@ -85,6 +85,13 @@ data class AgentSessionInfo(
     val updatedAt: String?,
 )
 
+data class BridgeApprovalRequest(
+    val approvalId: String,
+    val action: String,
+    val summary: String,
+    val details: String?,
+)
+
 data class ChatMessage(
     val role: MessageRole,
     val text: String,

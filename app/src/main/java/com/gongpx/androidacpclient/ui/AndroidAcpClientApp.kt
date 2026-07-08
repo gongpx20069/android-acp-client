@@ -2302,10 +2302,8 @@ private fun Chat.withActivity(title: String, summary: String, details: String): 
 }
 
 private fun List<ChatMessage>.latestVisibleHistory(limit: Int): List<ChatMessage> {
-    // Copilot ACP session/load replays recent history newest-first; display the selected window oldest-to-newest.
     return filter { it.kind == ChatMessageKind.Message }
-        .take(limit.coerceAtLeast(1))
-        .asReversed()
+        .takeLast(limit.coerceAtLeast(1))
 }
 
 private fun Chat.availableCommands(): List<AvailableCommand> {

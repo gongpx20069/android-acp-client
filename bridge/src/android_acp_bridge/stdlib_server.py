@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import queue
 import struct
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -121,13 +123,27 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                 payload = json.loads(message)
             except json.JSONDecodeError:
                 payload = message
-            def emit(response: dict[str, Any]) -> None:
-                try:
-                    _write_websocket_text(self.wfile, json.dumps(response, separators=(",", ":")))
-                except OSError:
-                    raise
+            response_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
 
-            for response in self.server.runtime.websocket_responses(payload, emit=emit):
+            def emit(response: dict[str, Any]) -> None:
+                response_queue.put(response)
+
+            def run_runtime() -> None:
+                try:
+                    for response in self.server.runtime.websocket_responses(payload, emit=emit):
+                        response_queue.put(response)
+                finally:
+                    response_queue.put(None)
+
+            threading.Thread(target=run_runtime, daemon=True).start()
+
+            while True:
+                try:
+                    response = response_queue.get(timeout=WEBSOCKET_HEARTBEAT_SECONDS)
+                except queue.Empty:
+                    response = {"type": "bridge.heartbeat"}
+                if response is None:
+                    break
                 try:
                     _write_websocket_text(self.wfile, json.dumps(response, separators=(",", ":")))
                 except OSError:
@@ -138,6 +154,9 @@ def run_server(runtime: BridgeRuntime) -> None:
     server = BridgeHTTPServer((runtime.config.host, runtime.config.port), runtime)
     print(f"Bridge server listening on http://{runtime.config.host}:{runtime.config.port}")
     server.serve_forever()
+
+
+WEBSOCKET_HEARTBEAT_SECONDS = 5
 
 
 def _websocket_accept(key: str) -> str:

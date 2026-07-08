@@ -266,6 +266,9 @@ class BridgeClient {
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         val json = runCatching { JSONObject(text) }.getOrNull()
+                        if (json?.optString("type") == "bridge.heartbeat") {
+                            return
+                        }
                         if (json?.optString("type") == "bridge.done") {
                             if (continuation.isActive) {
                                 continuation.resume(Result.success(events.toList()))

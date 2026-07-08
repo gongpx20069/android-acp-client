@@ -96,7 +96,7 @@ class AcpAgentSession:
             timeout_seconds=60,
         )
         session._session_id = _extract_session_id(result)
-        session._pending_updates = updates
+        session._pending_updates = session._pending_updates + updates
         return session
 
     @classmethod
@@ -125,7 +125,7 @@ class AcpAgentSession:
             _start_stderr_reader(process.stderr, stderr_queue)
 
         session = cls(process, output_queue, "")
-        session._request(
+        _result, updates = session._request(
             "initialize",
             {
                 "protocolVersion": 1,
@@ -138,6 +138,7 @@ class AcpAgentSession:
             },
             timeout_seconds=30,
         )
+        session._pending_updates = updates
         return session
 
     @classmethod

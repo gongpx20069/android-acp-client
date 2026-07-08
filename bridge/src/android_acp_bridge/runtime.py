@@ -35,6 +35,12 @@ class PendingApproval:
     decision: str | None = None
 
 
+@dataclass
+class AgentChunkLogBuffer:
+    text: str = ""
+    suppressed: bool = False
+
+
 class AgentManager(Protocol):
     def prompt(self, request: AcpPromptRequest, permission_callback: Callable[[dict[str, Any]], str] | None = None) -> list[dict[str, Any]]:
         ...
@@ -67,6 +73,7 @@ class BridgeRuntime:
         self.agent_manager = agent_manager or AcpAgentManager()
         self._pending_approvals: dict[str, PendingApproval] = {}
         self._approval_lock = threading.Lock()
+        self._agent_chunk_logs: dict[str, AgentChunkLogBuffer] = {}
 
     def health_response(self) -> dict[str, Any]:
         return {"status": "ok", "bridgeVersion": __version__}
@@ -354,13 +361,40 @@ class BridgeRuntime:
     def _log_responses(self, responses: list[dict[str, Any]]) -> None:
         for response in responses:
             self._log_response(response)
+        if any(response.get("type") == "bridge.done" for response in responses):
+            for response in responses:
+                chat_id = response.get("chatId")
+                if isinstance(chat_id, str):
+                    self._flush_agent_chunk_log(chat_id)
 
     def _log_response(self, response: dict[str, Any]) -> None:
+        chat_id = _string_or_default(response.get("chatId"), "unknown-chat")
+        if _is_agent_message_chunk(response):
+            self._buffer_agent_chunk_log(chat_id, _agent_message_text(response))
+            return
+        self._flush_agent_chunk_log(chat_id)
         summary = _summarize_response(response)
         if summary is None:
             return
-        chat_id = _string_or_default(response.get("chatId"), "unknown-chat")
         print(f"[bridge] -> android chat={chat_id} {summary}", flush=True)
+
+    def _buffer_agent_chunk_log(self, chat_id: str, text: str) -> None:
+        if not text.strip():
+            return
+        buffer = self._agent_chunk_logs.setdefault(chat_id, AgentChunkLogBuffer())
+        if buffer.suppressed:
+            return
+        buffer.text += text
+        if len(buffer.text) >= 50:
+            print(f"[bridge] -> android chat={chat_id} agent_message_chunk \"{_truncate_log(buffer.text, 50)}\"", flush=True)
+            buffer.text = ""
+            buffer.suppressed = True
+
+    def _flush_agent_chunk_log(self, chat_id: str) -> None:
+        buffer = self._agent_chunk_logs.pop(chat_id, None)
+        if buffer is None or buffer.suppressed or not buffer.text.strip():
+            return
+        print(f"[bridge] -> android chat={chat_id} agent_message_chunk \"{_truncate_log(buffer.text, 50)}\"", flush=True)
 
 
 def parse_device_info(value: Any) -> DeviceInfo | None:
@@ -401,9 +435,7 @@ def _summarize_response(response: dict[str, Any]) -> str | None:
     update = response.get("update") if isinstance(response.get("update"), dict) else {}
     update_kind = _string_or_default(update.get("sessionUpdate"), "session/update")
     if update_kind == "agent_message_chunk":
-        text = _string_or_default(update.get("text"), "")
-        if not text and isinstance(update.get("content"), dict):
-            text = _string_or_default(update["content"].get("text"), "")
+        text = _agent_message_text(response)
         if not text.strip():
             return None
         return f"{update_kind} \"{_truncate_log(text)}\""
@@ -419,6 +451,21 @@ def _summarize_response(response: dict[str, Any]) -> str | None:
         count = len(options) if isinstance(options, list) else 0
         return f"{update_kind} \"{count} option(s)\""
     return f"{update_kind} \"{_truncate_log(update)}\""
+
+
+def _is_agent_message_chunk(response: dict[str, Any]) -> bool:
+    if response.get("type") != "session/update":
+        return False
+    update = response.get("update") if isinstance(response.get("update"), dict) else {}
+    return update.get("sessionUpdate") == "agent_message_chunk"
+
+
+def _agent_message_text(response: dict[str, Any]) -> str:
+    update = response.get("update") if isinstance(response.get("update"), dict) else {}
+    text = _string_or_default(update.get("text"), "")
+    if not text and isinstance(update.get("content"), dict):
+        text = _string_or_default(update["content"].get("text"), "")
+    return text
 
 
 def _select_permission_option(options: list[dict[str, Any]], decision: str) -> str:

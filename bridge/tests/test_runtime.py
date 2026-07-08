@@ -141,6 +141,72 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("[bridge] -> android chat=chat_1 tool_call_update", logs)
         self.assertIn("[bridge] -> android chat=chat_1 agent_message_chunk", logs)
 
+    def test_agent_message_chunks_are_logged_as_one_line(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+        )
+        output = io.StringIO()
+        responses = [
+            {
+                "type": "session/update",
+                "chatId": "chat_1",
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"text": "是"}},
+            },
+            {
+                "type": "session/update",
+                "chatId": "chat_1",
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"text": "**"}},
+            },
+            {
+                "type": "session/update",
+                "chatId": "chat_1",
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"text": "`gpt-5.5`"}},
+            },
+            {"type": "bridge.done", "chatId": "chat_1"},
+        ]
+
+        with redirect_stdout(output):
+            runtime._log_responses(responses)
+
+        lines = [line for line in output.getvalue().splitlines() if "agent_message_chunk" in line]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("是**`gpt-5.5`", lines[0])
+
+    def test_agent_message_chunk_log_is_suppressed_after_fifty_chars(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+        )
+        output = io.StringIO()
+        responses = [
+            {
+                "type": "session/update",
+                "chatId": "chat_1",
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"text": "x" * 20}},
+            },
+            {
+                "type": "session/update",
+                "chatId": "chat_1",
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"text": "y" * 35}},
+            },
+            {
+                "type": "session/update",
+                "chatId": "chat_1",
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"text": "z" * 20}},
+            },
+            {"type": "bridge.done", "chatId": "chat_1"},
+        ]
+
+        with redirect_stdout(output):
+            runtime._log_responses(responses)
+
+        lines = [line for line in output.getvalue().splitlines() if "agent_message_chunk" in line]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("…", lines[0])
+
     def test_approval_decision_websocket_response_is_tool_call_update(self) -> None:
         runtime = BridgeRuntime(
             config=BridgeConfig(machine_name="devbox"),

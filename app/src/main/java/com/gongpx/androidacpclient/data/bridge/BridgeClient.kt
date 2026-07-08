@@ -445,8 +445,16 @@ class BridgeClient {
             return
         }
 
-        val existingIndex = messages.indexOfFirst { it.activityId == streamId }
+        val existingIndex = if (message.kind == ChatMessageKind.Message) {
+            messages.indexOfLast { it.activityId == streamId }
+        } else {
+            messages.indexOfFirst { it.activityId == streamId }
+        }
         if (existingIndex < 0) {
+            messages.add(message)
+            return
+        }
+        if (message.kind == ChatMessageKind.Message && existingIndex != messages.lastIndex) {
             messages.add(message)
             return
         }

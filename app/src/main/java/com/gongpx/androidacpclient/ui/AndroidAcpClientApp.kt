@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -291,7 +292,7 @@ private data class AppStrings(
             close = "Close",
             on = "On",
             off = "Off",
-            configOptionsNotLoaded = "Options are not loaded yet. Send a prompt or wait for the Agent to publish config options.",
+            configOptionsNotLoaded = "Loading options from the agent. If this stays empty, the agent may not expose this config option yet.",
             resumeSession = "Resume session",
             loadingSessionsFrom = { "Loading sessions from $it..." },
             noResumableSessionsWorkspace = "No resumable sessions found for this Workspace.",
@@ -385,7 +386,7 @@ private data class AppStrings(
             close = "关闭",
             on = "On",
             off = "Off",
-            configOptionsNotLoaded = "选项尚未加载。请先发送一个 prompt，或等待 Agent 发布 config options。",
+            configOptionsNotLoaded = "正在从 Agent 加载选项。如果一直为空，说明当前 Agent 可能尚未暴露该配置项。",
             resumeSession = "恢复 session",
             loadingSessionsFrom = { "正在从 $it 加载 sessions..." },
             noResumableSessionsWorkspace = "当前 Workspace 没有可恢复 sessions。",
@@ -659,7 +660,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
             bridgeClient.refreshConfigOptions(machine, chat.id, chat.agentId, chat.workspacePath)
                 .onSuccess { events ->
                     val current = chats.firstOrNull { it.id == chat.id } ?: chat
-                    val refreshed = current.copy(messages = current.messages + events)
+                    val refreshed = current.copy(messages = events.fold(current.messages) { messages, event -> messages.mergeMessage(event) })
                     upsertChat(refreshed)
                     val refreshedOption = when {
                         option.id.normalizedKey() == "model" -> refreshed.modelConfigOption()
@@ -669,6 +670,9 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                     if (refreshedOption != null) {
                         modelDialogState = ModelDialogState(chat = refreshed, option = refreshedOption)
                     }
+                }
+                .onFailure {
+                    upsertChat(chat.withMessage(MessageRole.System, strings.modelChangeFailed(it.message)))
                 }
         }
     }
@@ -1241,6 +1245,7 @@ private fun ChatDetailScreen(
     val strings = LocalAppStrings.current
     var message by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    BackHandler(onBack = onBack)
     val commands = remember(chat.messages) {
         val advertisedCommands = chat.availableCommands()
         buildList {
@@ -2113,8 +2118,13 @@ private fun Chat.withMessage(role: MessageRole, text: String): Chat {
 
 private fun List<ChatMessage>.mergeMessage(message: ChatMessage): List<ChatMessage> {
     val streamId = message.activityId ?: return this + message
-    val existingIndex = indexOfFirst { it.activityId == streamId }
+    val existingIndex = if (message.kind == ChatMessageKind.Message) {
+        indexOfLast { it.activityId == streamId }
+    } else {
+        indexOfFirst { it.activityId == streamId }
+    }
     if (existingIndex < 0) return this + message
+    if (message.kind == ChatMessageKind.Message && existingIndex != lastIndex) return this + message
     return toMutableList().also { current ->
         val existing = current[existingIndex]
         current[existingIndex] = when {

@@ -107,11 +107,31 @@ class RuntimeTests(unittest.TestCase):
 
         responses = runtime.websocket_responses({"type": "chat.prompt", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "hello"})
 
-        self.assertEqual(responses[0]["type"], "session/update")
-        self.assertEqual(responses[0]["update"]["sessionUpdate"], "tool_call")
-        self.assertEqual(responses[1]["update"]["sessionUpdate"], "tool_call_update")
-        self.assertEqual(responses[2]["update"]["sessionUpdate"], "agent_message_chunk")
+        self.assertEqual(responses[0]["type"], "operation.accepted")
+        self.assertEqual(responses[1]["type"], "chat.status")
+        session_updates = [response for response in responses if response["type"] == "session/update"]
+        self.assertEqual(session_updates[0]["update"]["sessionUpdate"], "tool_call")
+        self.assertEqual(session_updates[1]["update"]["sessionUpdate"], "tool_call_update")
+        self.assertEqual(session_updates[2]["update"]["sessionUpdate"], "agent_message_chunk")
+        self.assertEqual(responses[-2]["type"], "chat.status")
         self.assertEqual(responses[-1]["type"], "bridge.done")
+
+    def test_chat_attach_replays_events_after_last_event_id(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+        prompt_responses = runtime.websocket_responses({"type": "chat.prompt", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "hello"})
+        first_event_id = prompt_responses[0]["eventId"]
+
+        attach_responses = runtime.websocket_responses({"type": "chat.attach", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "lastEventId": first_event_id})
+
+        self.assertEqual(attach_responses[0]["type"], "chat.attached")
+        replayed = attach_responses[1:-1]
+        self.assertTrue(all(response.get("eventId", 0) > first_event_id for response in replayed))
+        self.assertEqual(attach_responses[-1]["type"], "chat.status")
 
     def test_chat_prompt_logs_client_and_agent_updates(self) -> None:
         runtime = BridgeRuntime(
@@ -317,7 +337,8 @@ class RuntimeTests(unittest.TestCase):
         thread.join(timeout=5)
 
         self.assertFalse(thread.is_alive())
-        self.assertEqual(responses_holder[0][0]["update"]["status"], "allow-once")
+        session_updates = [response for response in responses_holder[0] if response["type"] == "session/update"]
+        self.assertEqual(session_updates[0]["update"]["status"], "allow-once")
 
     def test_concurrent_prompt_for_same_chat_is_rejected(self) -> None:
         manager = BlockingAgentManager()
@@ -346,7 +367,8 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(manager.prompts, ["first"])
         self.assertEqual(second[0]["update"]["toolCallId"], "chat_busy")
         self.assertIn("already processing", second[0]["update"]["content"]["error"])
-        self.assertEqual(first_responses[0][0]["update"]["sessionUpdate"], "agent_message_chunk")
+        session_updates = [response for response in first_responses[0] if response["type"] == "session/update"]
+        self.assertEqual(session_updates[0]["update"]["sessionUpdate"], "agent_message_chunk")
 
 
 class FakeAgentManager:

@@ -16,6 +16,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
@@ -172,6 +173,66 @@ class BridgeClient {
                 .put("workspacePath", workspacePath),
             allowPartialOnFailure = true,
         )
+    }
+
+    fun openChatConnection(
+        machine: Machine,
+        chatId: String,
+        agentId: String,
+        workspacePath: String,
+        lastEventId: Int,
+        onMessage: (ChatMessage) -> Unit = {},
+        onApproval: (BridgeApprovalRequest) -> Unit = {},
+        onStatus: (String) -> Unit = {},
+        onEventId: (Int) -> Unit = {},
+        onResyncRequired: () -> Unit = {},
+        onFailure: (Throwable) -> Unit = {},
+    ): ChatConnection {
+        val requestBuilder = Request.Builder().url(toWebSocketUrl(machine.endpoint, machine.deviceToken))
+        machine.connectionHeaders.forEach { (name, value) ->
+            requestBuilder.addHeader(name, value)
+        }
+        var socket: WebSocket? = null
+        val connection = ChatConnection(chatId = chatId) { payload ->
+            socket?.send(payload.toString()) == true
+        }
+        socket = webSocketClient.newWebSocket(
+            requestBuilder.build(),
+            object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    webSocket.send(
+                        JSONObject()
+                            .put("type", "chat.attach")
+                            .put("chatId", chatId)
+                            .put("agentId", agentId)
+                            .put("workspacePath", workspacePath)
+                            .put("lastEventId", lastEventId)
+                            .toString(),
+                    )
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    val event = runCatching { JSONObject(text) }.getOrNull() ?: return
+                    val eventId = event.optInt("eventId", -1)
+                    if (eventId >= 0) {
+                        mainHandler.post { onEventId(eventId) }
+                    }
+                    when (event.optString("type")) {
+                        "bridge.accepted", "bridge.heartbeat", "chat.attached", "operation.accepted", "operation.done" -> return
+                        "chat.status" -> mainHandler.post { onStatus(event.optString("status")) }
+                        "chat.resyncRequired" -> mainHandler.post { onResyncRequired() }
+                        "approval.requested" -> event.toApprovalRequest()?.let { request -> mainHandler.post { onApproval(request) } }
+                        else -> parseBridgeMessage(event.toString()).message?.let { message -> mainHandler.post { onMessage(message) } }
+                    }
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    mainHandler.post { onFailure(t.withReadableMessage()) }
+                }
+            },
+        )
+        connection.setCloseHandler { socket?.close(1000, "chat closed") }
+        return connection
     }
 
     private fun getJson(endpoint: String, path: String, headers: Map<String, String>): JSONObject {
@@ -341,6 +402,9 @@ class BridgeClient {
             ?: return ParsedBridgeMessage(message = ChatMessage(MessageRole.Agent, text, System.currentTimeMillis()))
         if (json.optString("type") == "bridge.done") {
             return ParsedBridgeMessage(done = true)
+        }
+        if (json.optString("type") in setOf("bridge.accepted", "bridge.heartbeat", "chat.attached", "chat.status", "operation.accepted", "operation.done")) {
+            return ParsedBridgeMessage()
         }
 
         val update = json.optJSONObject("update")
@@ -524,6 +588,33 @@ class BridgeClient {
 
     private companion object {
         const val TIMEOUT_MS = 10_000
+    }
+}
+
+class ChatConnection internal constructor(
+    val chatId: String,
+    private val sendJson: (JSONObject) -> Boolean,
+) {
+    private var closeHandler: (() -> Unit)? = null
+
+    fun sendPrompt(agentId: String, workspacePath: String, text: String): Boolean {
+        return sendJson(
+            JSONObject()
+                .put("type", "chat.prompt")
+                .put("operationId", "op_" + UUID.randomUUID())
+                .put("chatId", chatId)
+                .put("agentId", agentId)
+                .put("workspacePath", workspacePath)
+                .put("content", text),
+        )
+    }
+
+    fun close() {
+        closeHandler?.invoke()
+    }
+
+    internal fun setCloseHandler(handler: () -> Unit) {
+        closeHandler = handler
     }
 }
 

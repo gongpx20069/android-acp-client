@@ -95,7 +95,7 @@ The app maps these bridge/ACP events:
 
 ## Persistent Chat Channel Design
 
-The target Android connection model is one `ChatConnection` per active chat. The connection opens when a chat detail screen is active or a background operation needs to keep the chat live.
+The Android connection model is one `ChatConnection` per active chat. The connection opens when a chat detail screen is active or a background operation needs to keep the chat live.
 
 On connect or reconnect, Android sends:
 

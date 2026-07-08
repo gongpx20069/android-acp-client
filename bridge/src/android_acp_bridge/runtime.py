@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 import threading
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
@@ -76,6 +77,10 @@ class BridgeRuntime:
         self._agent_chunk_logs: dict[str, AgentChunkLogBuffer] = {}
         self._busy_chats: set[str] = set()
         self._busy_lock = threading.Lock()
+        self._event_logs: dict[str, list[dict[str, Any]]] = {}
+        self._next_event_ids: dict[str, int] = {}
+        self._chat_status: dict[str, str] = {}
+        self._event_lock = threading.Lock()
 
     def health_response(self) -> dict[str, Any]:
         return {"status": "ok", "bridgeVersion": __version__}
@@ -131,6 +136,10 @@ class BridgeRuntime:
             if emit is not None:
                 emit(response)
 
+        if message_type == "chat.attach":
+            responses = self._chat_attach_response(payload)
+            self._log_responses(responses)
+            return responses
         if message_type == "chat.prompt":
             responses = self._chat_prompt_updates(payload, logging_emit if emit is not None else None)
             self._log_responses(responses)
@@ -172,14 +181,17 @@ class BridgeRuntime:
 
     def _chat_prompt_updates(self, payload: dict[str, Any], emit: Callable[[dict[str, Any]], None] | None) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
+        operation_id = _string_or_default(payload.get("operationId"), "op_" + secrets.token_urlsafe(8))
         prompt = _string_or_default(payload.get("content"), "")
         agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
         workspace_path = _string_or_default(payload.get("workspacePath"), "")
         if not self._try_mark_chat_busy(chat_id):
-            return [
+            failed = self._append_event(
+                chat_id,
                 {
                     "type": "session/update",
                     "chatId": chat_id,
+                    "operationId": operation_id,
                     "update": {
                         "sessionUpdate": "tool_call_update",
                         "toolCallId": "chat_busy",
@@ -189,9 +201,35 @@ class BridgeRuntime:
                         "content": {"error": "Chat is already processing a prompt."},
                     },
                 },
+            )
+            done = self._append_event(
+                chat_id,
+                {
+                    "type": "operation.done",
+                    "chatId": chat_id,
+                    "operationId": operation_id,
+                    "operationType": "chat.prompt",
+                    "status": "failed",
+                },
+            )
+            return [
+                failed,
+                done,
                 {"type": "bridge.done", "chatId": chat_id},
             ]
         try:
+            responses: list[dict[str, Any]] = [
+                self._append_event(
+                    chat_id,
+                    {
+                        "type": "operation.accepted",
+                        "chatId": chat_id,
+                        "operationId": operation_id,
+                        "operationType": "chat.prompt",
+                    },
+                ),
+                self._set_chat_status(chat_id, "busy", operation_id),
+            ]
             try:
                 updates = self.agent_manager.prompt(
                     AcpPromptRequest(
@@ -202,11 +240,13 @@ class BridgeRuntime:
                     ),
                     permission_callback=lambda message: self._request_permission(chat_id, message, emit),
                 )
+                operation_status = "completed"
             except AcpAgentError as exc:
                 updates = [
                     {
                         "type": "session/update",
                         "chatId": chat_id,
+                        "operationId": operation_id,
                         "update": {
                             "sessionUpdate": "tool_call_update",
                             "toolCallId": "agent_start",
@@ -217,9 +257,26 @@ class BridgeRuntime:
                         },
                     }
                 ]
+                operation_status = "failed"
             for update in updates:
                 update.setdefault("chatId", chat_id)
-            return updates + [{"type": "bridge.done", "chatId": chat_id}]
+                update.setdefault("operationId", operation_id)
+                responses.append(self._append_event(chat_id, update))
+            responses.append(
+                self._append_event(
+                    chat_id,
+                    {
+                        "type": "operation.done",
+                        "chatId": chat_id,
+                        "operationId": operation_id,
+                        "operationType": "chat.prompt",
+                        "status": operation_status,
+                    },
+                )
+            )
+            responses.append(self._set_chat_status(chat_id, "idle", operation_id if operation_status != "completed" else None))
+            responses.append({"type": "bridge.done", "chatId": chat_id})
+            return responses
         finally:
             self._mark_chat_idle(chat_id)
 
@@ -295,8 +352,11 @@ class BridgeRuntime:
             "details": tool_call,
             "options": options,
         }
+        requested = self._append_event(chat_id, requested)
+        waiting_status = self._set_chat_status(chat_id, "waitingApproval")
         if emit is not None:
             emit(requested)
+            emit(waiting_status)
 
         with pending.condition:
             pending.condition.wait(timeout=300)
@@ -306,6 +366,24 @@ class BridgeRuntime:
             self._pending_approvals.pop(approval_id, None)
 
         return _select_permission_option(options, decision)
+
+    def _chat_attach_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
+        last_event_id = _int_or_default(payload.get("lastEventId"), 0)
+        with self._event_lock:
+            events = [event.copy() for event in self._event_logs.get(chat_id, []) if int(event.get("eventId", 0)) > last_event_id]
+            latest_event_id = self._next_event_ids.get(chat_id, 1) - 1
+            status = self._chat_status.get(chat_id, "idle")
+        return [
+            {
+                "type": "chat.attached",
+                "chatId": chat_id,
+                "latestEventId": latest_event_id,
+                "replayed": len(events),
+            },
+            *events,
+            self._append_event(chat_id, {"type": "chat.status", "chatId": chat_id, "status": status}),
+        ]
 
     def _resolve_approval(self, approval_id: str, decision: str) -> bool:
         with self._approval_lock:
@@ -327,6 +405,28 @@ class BridgeRuntime:
     def _mark_chat_idle(self, chat_id: str) -> None:
         with self._busy_lock:
             self._busy_chats.discard(chat_id)
+
+    def _append_event(self, chat_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        with self._event_lock:
+            event_id = self._next_event_ids.get(chat_id, 1)
+            self._next_event_ids[chat_id] = event_id + 1
+            enriched = event.copy()
+            enriched.setdefault("chatId", chat_id)
+            enriched["eventId"] = event_id
+            enriched.setdefault("timestamp", int(time.time() * 1000))
+            log = self._event_logs.setdefault(chat_id, [])
+            log.append(enriched)
+            if len(log) > CHAT_EVENT_LOG_LIMIT:
+                del log[: len(log) - CHAT_EVENT_LOG_LIMIT]
+            return enriched
+
+    def _set_chat_status(self, chat_id: str, status: str, operation_id: str | None = None) -> dict[str, Any]:
+        with self._event_lock:
+            self._chat_status[chat_id] = status
+        event: dict[str, Any] = {"type": "chat.status", "chatId": chat_id, "status": status}
+        if operation_id is not None:
+            event["operationId"] = operation_id
+        return self._append_event(chat_id, event)
 
     def _session_set_config_option_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
@@ -450,6 +550,10 @@ def _string_or_default(value: Any, default: str) -> str:
     return value if isinstance(value, str) else default
 
 
+def _int_or_default(value: Any, default: int) -> int:
+    return value if isinstance(value, int) else default
+
+
 def _truncate_log(value: Any, limit: int = 80) -> str:
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     normalized = " ".join(text.split())
@@ -507,3 +611,6 @@ def _select_permission_option(options: list[dict[str, Any]], decision: str) -> s
     if match is None and options:
         match = options[0]
     return str((match or {}).get("optionId", fallback))
+
+
+CHAT_EVENT_LOG_LIMIT = 500

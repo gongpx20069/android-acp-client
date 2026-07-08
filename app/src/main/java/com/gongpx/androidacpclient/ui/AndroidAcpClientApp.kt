@@ -61,6 +61,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,6 +88,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.gongpx.androidacpclient.BuildConfig
 import com.gongpx.androidacpclient.data.bridge.BridgeClient
+import com.gongpx.androidacpclient.data.bridge.ChatConnection
 import com.gongpx.androidacpclient.data.model.Agent
 import com.gongpx.androidacpclient.data.model.AgentSessionInfo
 import com.gongpx.androidacpclient.data.model.Approval
@@ -479,6 +481,8 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
     val chats = remember { mutableStateListOf<Chat>() }
     val approvals = remember { mutableStateListOf<Approval>() }
     val busyChatIds = remember { mutableStateListOf<String>() }
+    val chatConnections = remember { mutableStateMapOf<String, ChatConnection>() }
+    val lastChatEventIds = remember { mutableStateMapOf<String, Int>() }
     var selectedTab by remember { mutableStateOf(AppTab.Machines) }
     var selectedChatId by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -621,6 +625,13 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         val machine = machines.firstOrNull { it.id == approval.machineId } ?: return
         scope.launch {
             bridgeClient.sendApprovalDecision(machine, approval.id, if (status == ApprovalStatus.Approved) "approved" else "denied").result
+        }
+
+        fun updateChatStatus(chatId: String, status: String) {
+            when (status) {
+                "busy", "waitingApproval" -> if (chatId !in busyChatIds) busyChatIds.add(chatId)
+                "idle", "failed", "disconnected" -> busyChatIds.remove(chatId)
+            }
         }
     }
 
@@ -786,6 +797,48 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
 
     MaterialTheme {
         CompositionLocalProvider(LocalAppStrings provides strings) {
+        val activeChat = chats.firstOrNull { it.id == selectedChatId }
+        DisposableEffect(activeChat?.id, activeChat?.machineId, activeChat?.agentId, activeChat?.workspacePath) {
+            if (activeChat == null) {
+                onDispose { }
+            } else {
+                val machine = machines.firstOrNull { it.id == activeChat.machineId }
+                if (machine == null) {
+                    onDispose { }
+                } else {
+                    val connection = bridgeClient.openChatConnection(
+                        machine = machine,
+                        chatId = activeChat.id,
+                        agentId = activeChat.agentId,
+                        workspacePath = activeChat.workspacePath,
+                        lastEventId = lastChatEventIds[activeChat.id] ?: 0,
+                        onMessage = { event -> appendChatEvent(activeChat.id, event) },
+                        onApproval = { request ->
+                            appendChatEvent(
+                                activeChat.id,
+                                ChatMessage(
+                                    role = MessageRole.Agent,
+                                    text = strings.approvalRequired(request.summary),
+                                    timestampMillis = System.currentTimeMillis(),
+                                    kind = ChatMessageKind.Activity,
+                                    title = strings.approvalRequiredTitle,
+                                    details = request.details,
+                                    activityId = request.approvalId,
+                                ),
+                            )
+                            addApproval(activeChat, request)
+                        },
+                        onStatus = { updateChatStatus(activeChat.id, it) },
+                        onEventId = { lastChatEventIds[activeChat.id] = maxOf(lastChatEventIds[activeChat.id] ?: 0, it) },
+                        onFailure = { updateChatStatus(activeChat.id, "disconnected") },
+                    )
+                    chatConnections[activeChat.id] = connection
+                    onDispose {
+                        chatConnections.remove(activeChat.id)?.close()
+                    }
+                }
+            }
+        }
         Surface(modifier = Modifier.fillMaxSize()) {
             if (scannerOpen) {
                 QrScannerScreen(
@@ -858,42 +911,47 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                     val updated = chat.withMessage(MessageRole.User, message)
                                     upsertChat(updated)
                                     if (chat.id !in busyChatIds) busyChatIds.add(chat.id)
-                                    scope.launch {
-                                        val sendResult = bridgeClient.sendChatPrompt(
-                                            machine = machine,
-                                            chatId = chat.id,
-                                            agentId = chat.agentId,
-                                            workspacePath = chat.workspacePath,
-                                            text = message,
-                                            onMessage = { event -> appendChatEvent(chat.id, event) },
-                                            onApproval = { request ->
-                                                appendChatEvent(
-                                                    chat.id,
-                                                    ChatMessage(
-                                                        role = MessageRole.Agent,
-                                                        text = strings.approvalRequired(request.summary),
-                                                        timestampMillis = System.currentTimeMillis(),
-                                                        kind = ChatMessageKind.Activity,
-                                                        title = strings.approvalRequiredTitle,
-                                                        details = request.details,
-                                                        activityId = request.approvalId,
-                                                    ),
-                                                )
-                                                addApproval(chat, request)
-                                            },
-                                        )
-                                        sendResult.result
-                                            .onFailure {
-                                                val current = chats.firstOrNull { current -> current.id == chat.id } ?: updated
-                                                if (!sendResult.accepted) {
-                                                    upsertChat(current.withMessage(MessageRole.System, strings.bridgeWebSocketFailed(it.message)))
+                                    val activeConnection = chatConnections[chat.id]
+                                    if (activeConnection != null && activeConnection.sendPrompt(chat.agentId, chat.workspacePath, message)) {
+                                        // Persistent chat WebSocket owns streaming events and status updates.
+                                    } else {
+                                        scope.launch {
+                                            val sendResult = bridgeClient.sendChatPrompt(
+                                                machine = machine,
+                                                chatId = chat.id,
+                                                agentId = chat.agentId,
+                                                workspacePath = chat.workspacePath,
+                                                text = message,
+                                                onMessage = { event -> appendChatEvent(chat.id, event) },
+                                                onApproval = { request ->
+                                                    appendChatEvent(
+                                                        chat.id,
+                                                        ChatMessage(
+                                                            role = MessageRole.Agent,
+                                                            text = strings.approvalRequired(request.summary),
+                                                            timestampMillis = System.currentTimeMillis(),
+                                                            kind = ChatMessageKind.Activity,
+                                                            title = strings.approvalRequiredTitle,
+                                                            details = request.details,
+                                                            activityId = request.approvalId,
+                                                        ),
+                                                    )
+                                                    addApproval(chat, request)
+                                                },
+                                            )
+                                            sendResult.result
+                                                .onFailure {
+                                                    val current = chats.firstOrNull { current -> current.id == chat.id } ?: updated
+                                                    if (!sendResult.accepted) {
+                                                        upsertChat(current.withMessage(MessageRole.System, strings.bridgeWebSocketFailed(it.message)))
+                                                    }
                                                 }
+                                            // If the bridge accepted the prompt but the transient WebSocket broke before bridge.done,
+                                            // keep the chat busy because the Agent may still be running on the bridge.
+                                            if (sendResult.result.isSuccess || !sendResult.accepted) {
+                                                busyChatIds.remove(chat.id)
                                             }
-                                        // If the bridge accepted the prompt but the transient WebSocket broke before bridge.done,
-                                        // keep the chat busy because the Agent may still be running on the bridge.
-                                        if (sendResult.result.isSuccess || !sendResult.accepted) {
-                                            busyChatIds.remove(chat.id)
-                                        }
+                                                }
                                     }
                                 }
                             },

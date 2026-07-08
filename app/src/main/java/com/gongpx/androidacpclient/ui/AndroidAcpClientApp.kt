@@ -1027,10 +1027,12 @@ private fun ChatsScreen(
     val strings = LocalAppStrings.current
     val selectedChat = chats.firstOrNull { it.id == selectedChatId }
     if (selectedChat != null) {
+        val selectedMachineState = machines.firstOrNull { it.id == selectedChat.machineId }?.connectionState ?: ConnectionState.Unknown
         ChatDetailScreen(
             padding = padding,
             chat = selectedChat,
             isBusy = selectedChat.id in busyChatIds,
+            connectionState = selectedMachineState,
             onBack = onBackToList,
             onSendMessage = { onSendMessage(selectedChat, it) },
             onCommand = { command ->
@@ -1208,11 +1210,12 @@ private fun ChatsScreen(
             item { EmptyStateCard(strings.noChatsYet, strings.createChatAfterPairing) }
         } else {
             items(chats, key = { it.id }) { chat ->
+                val machineState = machines.firstOrNull { it.id == chat.machineId }?.connectionState ?: ConnectionState.Unknown
                 SwipeToDeleteItem(onDelete = { onDeleteChat(chat) }) {
                     ElevatedCard(onClick = { onOpenChat(chat) }, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                ChatStatusDot(isBusy = chat.id in busyChatIds)
+                                ChatStatusDot(isBusy = chat.id in busyChatIds, connectionState = machineState)
                                 Text(chat.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             }
                             Text("${chat.machineName} · ${chat.workspacePath}", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1230,6 +1233,7 @@ private fun ChatDetailScreen(
     padding: PaddingValues,
     chat: Chat,
     isBusy: Boolean,
+    connectionState: ConnectionState,
     onBack: () -> Unit,
     onSendMessage: (String) -> Unit,
     onCommand: (AvailableCommand) -> Unit,
@@ -1270,7 +1274,7 @@ private fun ChatDetailScreen(
                 }
                 Column {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        ChatStatusDot(isBusy = isBusy)
+                        ChatStatusDot(isBusy = isBusy, connectionState = connectionState)
                         Text(chat.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     }
                     Text("${chat.machineName} · ${chat.workspacePath}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1352,11 +1356,15 @@ private fun CommandPill(command: AvailableCommand, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ChatStatusDot(isBusy: Boolean) {
-    val color = if (isBusy) Color(0xFFDC2626) else Color(0xFF16A34A)
+private fun ChatStatusDot(isBusy: Boolean, connectionState: ConnectionState) {
+    val color = when {
+        isBusy -> Color(0xFFDC2626)
+        connectionState == ConnectionState.Online -> Color(0xFF16A34A)
+        else -> Color(0xFF9CA3AF)
+    }
     Box(
         modifier = Modifier
-            .size(8.dp)
+            .size(12.dp)
             .background(color, RoundedCornerShape(999.dp)),
     )
 }

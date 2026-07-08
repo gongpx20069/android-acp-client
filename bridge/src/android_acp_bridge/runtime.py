@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import threading
+import json
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
@@ -108,22 +109,46 @@ class BridgeRuntime:
 
     def websocket_responses(self, payload: Any, emit: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]]:
         if not isinstance(payload, dict):
-            return [{"type": "bridge.echo", "payload": payload}, {"type": "bridge.done"}]
+            responses = [{"type": "bridge.echo", "payload": payload}, {"type": "bridge.done"}]
+            self._log_responses(responses)
+            return responses
 
         message_type = payload.get("type")
         if message_type == "chat.prompt":
-            return self._chat_prompt_updates(payload, emit)
+            self._log_client_prompt(payload)
+
+        def logging_emit(response: dict[str, Any]) -> None:
+            self._log_response(response)
+            if emit is not None:
+                emit(response)
+
+        if message_type == "chat.prompt":
+            responses = self._chat_prompt_updates(payload, logging_emit if emit is not None else None)
+            self._log_responses(responses)
+            return responses
         if message_type == "session.list":
-            return self._session_list_response(payload)
+            responses = self._session_list_response(payload)
+            self._log_responses(responses)
+            return responses
         if message_type == "session.load":
-            return self._session_load_response(payload)
+            responses = self._session_load_response(payload)
+            self._log_responses(responses)
+            return responses
         if message_type == "session.refreshConfigOptions":
-            return self._session_refresh_config_options_response(payload)
+            responses = self._session_refresh_config_options_response(payload)
+            self._log_responses(responses)
+            return responses
         if message_type == "session.setConfigOption":
-            return self._session_set_config_option_response(payload)
+            responses = self._session_set_config_option_response(payload)
+            self._log_responses(responses)
+            return responses
         if message_type == "approval.decide":
-            return self._approval_decision_updates(payload)
-        return [{"type": "bridge.echo", "payload": payload}, {"type": "bridge.done"}]
+            responses = self._approval_decision_updates(payload)
+            self._log_responses(responses)
+            return responses
+        responses = [{"type": "bridge.echo", "payload": payload}, {"type": "bridge.done"}]
+        self._log_responses(responses)
+        return responses
 
     def confirm_pairing(self, device: DeviceInfo) -> bool:
         if not self.require_local_pairing_confirmation:
@@ -316,6 +341,27 @@ class BridgeRuntime:
             update.setdefault("chatId", chat_id)
         return updates + [{"type": "bridge.done", "chatId": chat_id}]
 
+    def _log_client_prompt(self, payload: dict[str, Any]) -> None:
+        chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
+        agent_id = _string_or_default(payload.get("agentId"), "unknown-agent")
+        workspace_path = _string_or_default(payload.get("workspacePath"), "")
+        content = _string_or_default(payload.get("content"), "")
+        print(
+            f"[bridge] <- client chat={chat_id} agent={agent_id} cwd={_truncate_log(workspace_path, 40)} prompt=\"{_truncate_log(content)}\"",
+            flush=True,
+        )
+
+    def _log_responses(self, responses: list[dict[str, Any]]) -> None:
+        for response in responses:
+            self._log_response(response)
+
+    def _log_response(self, response: dict[str, Any]) -> None:
+        summary = _summarize_response(response)
+        if summary is None:
+            return
+        chat_id = _string_or_default(response.get("chatId"), "unknown-chat")
+        print(f"[bridge] -> android chat={chat_id} {summary}", flush=True)
+
 
 def parse_device_info(value: Any) -> DeviceInfo | None:
     if not isinstance(value, dict):
@@ -336,6 +382,43 @@ def parse_device_info(value: Any) -> DeviceInfo | None:
 
 def _string_or_default(value: Any, default: str) -> str:
     return value if isinstance(value, str) else default
+
+
+def _truncate_log(value: Any, limit: int = 80) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    normalized = " ".join(text.split())
+    return normalized if len(normalized) <= limit else normalized[: limit - 1] + "…"
+
+
+def _summarize_response(response: dict[str, Any]) -> str | None:
+    response_type = response.get("type")
+    if response_type == "approval.requested":
+        summary = _string_or_default(response.get("summary"), "Agent requests approval")
+        return f"approval.requested \"{_truncate_log(summary)}\""
+    if response_type != "session/update":
+        return None
+
+    update = response.get("update") if isinstance(response.get("update"), dict) else {}
+    update_kind = _string_or_default(update.get("sessionUpdate"), "session/update")
+    if update_kind == "agent_message_chunk":
+        text = _string_or_default(update.get("text"), "")
+        if not text and isinstance(update.get("content"), dict):
+            text = _string_or_default(update["content"].get("text"), "")
+        if not text.strip():
+            return None
+        return f"{update_kind} \"{_truncate_log(text)}\""
+    if update_kind in {"tool_call", "tool_call_update"}:
+        title = _string_or_default(update.get("title"), _string_or_default(update.get("toolCallId"), "tool"))
+        status = _string_or_default(update.get("status"), "")
+        content = update.get("content")
+        detail = title if content is None else f"{title} {content}"
+        status_part = f" status={status}" if status else ""
+        return f"{update_kind}{status_part} \"{_truncate_log(detail)}\""
+    if update_kind == "config_option_update":
+        options = update.get("configOptions")
+        count = len(options) if isinstance(options, list) else 0
+        return f"{update_kind} \"{count} option(s)\""
+    return f"{update_kind} \"{_truncate_log(update)}\""
 
 
 def _select_permission_option(options: list[dict[str, Any]], decision: str) -> str:

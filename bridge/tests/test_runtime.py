@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 import threading
 import time
+import io
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from android_acp_bridge.acp_agent import AcpPromptRequest, _resolve_workspace
@@ -110,6 +112,34 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(responses[1]["update"]["sessionUpdate"], "tool_call_update")
         self.assertEqual(responses[2]["update"]["sessionUpdate"], "agent_message_chunk")
         self.assertEqual(responses[-1]["type"], "bridge.done")
+
+    def test_chat_prompt_logs_client_and_agent_updates(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            runtime.websocket_responses(
+                {
+                    "type": "chat.prompt",
+                    "chatId": "chat_1",
+                    "agentId": "copilot-cli",
+                    "workspacePath": "D:\\repo",
+                    "content": "hello " + "x" * 120,
+                }
+            )
+
+        logs = output.getvalue()
+        self.assertIn("[bridge] <- client chat=chat_1 agent=copilot-cli", logs)
+        self.assertIn('prompt="hello ', logs)
+        self.assertIn("…", logs)
+        self.assertIn("[bridge] -> android chat=chat_1 tool_call", logs)
+        self.assertIn("[bridge] -> android chat=chat_1 tool_call_update", logs)
+        self.assertIn("[bridge] -> android chat=chat_1 agent_message_chunk", logs)
 
     def test_approval_decision_websocket_response_is_tool_call_update(self) -> None:
         runtime = BridgeRuntime(

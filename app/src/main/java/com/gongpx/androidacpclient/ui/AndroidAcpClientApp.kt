@@ -626,12 +626,12 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         scope.launch {
             bridgeClient.sendApprovalDecision(machine, approval.id, if (status == ApprovalStatus.Approved) "approved" else "denied").result
         }
+    }
 
-        fun updateChatStatus(chatId: String, status: String) {
-            when (status) {
-                "busy", "waitingApproval" -> if (chatId !in busyChatIds) busyChatIds.add(chatId)
-                "idle", "failed", "disconnected" -> busyChatIds.remove(chatId)
-            }
+    fun updateChatStatus(chatId: String, status: String) {
+        when (status) {
+            "busy", "waitingApproval" -> if (chatId !in busyChatIds) busyChatIds.add(chatId)
+            "idle", "failed", "disconnected" -> busyChatIds.remove(chatId)
         }
     }
 

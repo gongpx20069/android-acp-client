@@ -183,7 +183,7 @@ class BridgeClient {
         lastEventId: Int,
         onMessage: (ChatMessage) -> Unit = {},
         onApproval: (BridgeApprovalRequest) -> Unit = {},
-        onStatus: (String) -> Unit = {},
+        onStatus: (String, Int?) -> Unit = { _, _ -> },
         onEventId: (Int) -> Unit = {},
         onResyncRequired: () -> Unit = {},
         onFailure: (Throwable) -> Unit = {},
@@ -219,7 +219,7 @@ class BridgeClient {
                     }
                     when (event.optString("type")) {
                         "bridge.accepted", "bridge.heartbeat", "chat.attached", "operation.accepted", "operation.done" -> return
-                        "chat.status" -> mainHandler.post { onStatus(event.optString("status")) }
+                        "chat.status" -> mainHandler.post { onStatus(event.optString("status"), eventId.takeIf { it >= 0 }) }
                         "chat.resyncRequired" -> mainHandler.post { onResyncRequired() }
                         "approval.requested" -> event.toApprovalRequest()?.let { request -> mainHandler.post { onApproval(request) } }
                         else -> parseBridgeMessage(event.toString()).message?.let { message -> mainHandler.post { onMessage(message) } }

@@ -23,13 +23,19 @@ class AcpPromptRequest:
 
 
 PermissionCallback = Callable[[dict[str, Any]], str]
+UpdateCallback = Callable[[dict[str, Any]], None]
 
 
 class AcpAgentManager:
     def __init__(self) -> None:
         self._sessions: dict[str, AcpAgentSession] = {}
 
-    def prompt(self, request: AcpPromptRequest, permission_callback: PermissionCallback | None = None) -> list[dict[str, Any]]:
+    def prompt(
+        self,
+        request: AcpPromptRequest,
+        permission_callback: PermissionCallback | None = None,
+        update_callback: UpdateCallback | None = None,
+    ) -> list[dict[str, Any]]:
         session = self._sessions.get(request.chat_id)
         startup_updates: list[dict[str, Any]] = []
         if session is None:
@@ -37,7 +43,11 @@ class AcpAgentManager:
             self._sessions[request.chat_id] = session
             startup_updates = session.take_pending_updates()
         session.permission_callback = permission_callback
-        return startup_updates + session.prompt(request.prompt)
+        if update_callback is not None:
+            for update in startup_updates:
+                update_callback(update)
+            startup_updates = []
+        return startup_updates + session.prompt(request.prompt, update_callback=update_callback)
 
     def list_sessions(self, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
         session = AcpAgentSession.start_without_session(agent_id, workspace_path)
@@ -157,7 +167,7 @@ class AcpAgentSession:
         session._session_id = session_id
         return session, updates
 
-    def prompt(self, prompt: str) -> list[dict[str, Any]]:
+    def prompt(self, prompt: str, update_callback: UpdateCallback | None = None) -> list[dict[str, Any]]:
         _result, updates = self._request(
             "session/prompt",
             {
@@ -165,6 +175,7 @@ class AcpAgentSession:
                 "prompt": [{"type": "text", "text": prompt}],
             },
             timeout_seconds=300,
+            update_callback=update_callback,
         )
         return updates
 
@@ -228,7 +239,13 @@ class AcpAgentSession:
                 self._process.kill()
                 self._process.wait(timeout=5)
 
-    def _request(self, method: str, params: dict[str, Any], timeout_seconds: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def _request(
+        self,
+        method: str,
+        params: dict[str, Any],
+        timeout_seconds: int,
+        update_callback: UpdateCallback | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         request_id = self._next_id
         self._next_id += 1
         self._write_json({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
@@ -253,7 +270,11 @@ class AcpAgentSession:
                 if isinstance(update, dict):
                     if update.get("sessionUpdate") == "config_option_update" and isinstance(update.get("configOptions"), list):
                         self._latest_config_options = update["configOptions"]
-                    updates.append({"type": "session/update", "update": update})
+                    wire_update = {"type": "session/update", "update": update}
+                    if update_callback is not None:
+                        update_callback(wire_update)
+                    else:
+                        updates.append(wire_update)
             elif method_name == "session/request_permission":
                 self._handle_permission_request(message)
 

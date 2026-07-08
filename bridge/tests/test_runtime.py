@@ -372,7 +372,7 @@ class RuntimeTests(unittest.TestCase):
 
 
 class FakeAgentManager:
-    def prompt(self, request: AcpPromptRequest, permission_callback=None):
+    def prompt(self, request: AcpPromptRequest, permission_callback=None, update_callback=None):
         if permission_callback is not None and request.prompt == "needs approval":
             option_id = permission_callback(
                 {
@@ -489,7 +489,7 @@ class BlockingAgentManager(FakeAgentManager):
         self.release = threading.Event()
         self.prompts: list[str] = []
 
-    def prompt(self, request: AcpPromptRequest, permission_callback=None):
+    def prompt(self, request: AcpPromptRequest, permission_callback=None, update_callback=None):
         self.prompts.append(request.prompt)
         self.started.set()
         self.release.wait(timeout=5)

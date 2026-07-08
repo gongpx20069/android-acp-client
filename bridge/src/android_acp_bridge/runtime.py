@@ -43,7 +43,12 @@ class AgentChunkLogBuffer:
 
 
 class AgentManager(Protocol):
-    def prompt(self, request: AcpPromptRequest, permission_callback: Callable[[dict[str, Any]], str] | None = None) -> list[dict[str, Any]]:
+    def prompt(
+        self,
+        request: AcpPromptRequest,
+        permission_callback: Callable[[dict[str, Any]], str] | None = None,
+        update_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[dict[str, Any]]:
         ...
 
     def list_sessions(self, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
@@ -231,6 +236,13 @@ class BridgeRuntime:
                 self._set_chat_status(chat_id, "busy", operation_id),
             ]
             try:
+                def emit_update(update: dict[str, Any]) -> None:
+                    update.setdefault("chatId", chat_id)
+                    update.setdefault("operationId", operation_id)
+                    event = self._append_event(chat_id, update)
+                    if emit is not None:
+                        emit(event)
+
                 updates = self.agent_manager.prompt(
                     AcpPromptRequest(
                         chat_id=chat_id,
@@ -239,6 +251,7 @@ class BridgeRuntime:
                         prompt=prompt,
                     ),
                     permission_callback=lambda message: self._request_permission(chat_id, message, emit),
+                    update_callback=emit_update if emit is not None else None,
                 )
                 operation_status = "completed"
             except AcpAgentError as exc:

@@ -32,6 +32,8 @@ import org.json.JSONObject
 class BridgeClient {
     private val webSocketClient = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
+        .writeTimeout(0, TimeUnit.MILLISECONDS)
+        .pingInterval(5, TimeUnit.SECONDS)
         .build()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -87,7 +89,7 @@ class BridgeClient {
         text: String,
         onMessage: (ChatMessage) -> Unit = {},
         onApproval: (BridgeApprovalRequest) -> Unit = {},
-    ): Result<List<ChatMessage>> {
+    ): BridgeSendResult<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
@@ -102,7 +104,7 @@ class BridgeClient {
         )
     }
 
-    suspend fun sendApprovalDecision(machine: Machine, approvalId: String, decision: String): Result<List<ChatMessage>> {
+    suspend fun sendApprovalDecision(machine: Machine, approvalId: String, decision: String): BridgeSendResult<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
@@ -124,10 +126,10 @@ class BridgeClient {
                 ?.optJSONArray("sessions")
                 ?: JSONArray()
             sessions.toSessionInfos()
-        }
+        }.result
     }
 
-    suspend fun loadSession(machine: Machine, chatId: String, agentId: String, workspacePath: String, sessionId: String): Result<List<ChatMessage>> {
+    suspend fun loadSession(machine: Machine, chatId: String, agentId: String, workspacePath: String, sessionId: String): BridgeSendResult<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
@@ -147,7 +149,7 @@ class BridgeClient {
         workspacePath: String,
         configId: String,
         value: String,
-    ): Result<List<ChatMessage>> {
+    ): BridgeSendResult<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
@@ -160,7 +162,7 @@ class BridgeClient {
         )
     }
 
-    suspend fun refreshConfigOptions(machine: Machine, chatId: String, agentId: String, workspacePath: String): Result<List<ChatMessage>> {
+    suspend fun refreshConfigOptions(machine: Machine, chatId: String, agentId: String, workspacePath: String): BridgeSendResult<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
@@ -201,7 +203,7 @@ class BridgeClient {
         onMessage: (ChatMessage) -> Unit = {},
         onApproval: (BridgeApprovalRequest) -> Unit = {},
         allowPartialOnFailure: Boolean = false,
-    ): Result<List<ChatMessage>> {
+    ): BridgeSendResult<List<ChatMessage>> {
         return sendRawBridgeMessage(machine, payload, allowPartialOnFailure = allowPartialOnFailure) { event ->
             if (event.optString("type") == "approval.requested") {
                 event.toApprovalRequest()?.let { request ->
@@ -230,29 +232,30 @@ class BridgeClient {
         payload: JSONObject,
         allowPartialOnFailure: Boolean = false,
         onEvent: (JSONObject) -> Unit = {},
-    ): Result<List<JSONObject>> {
+    ): BridgeSendResult<List<JSONObject>> {
         return suspendCancellableCoroutine { continuation ->
             val requestBuilder = Request.Builder().url(toWebSocketUrl(machine.endpoint, machine.deviceToken))
             machine.connectionHeaders.forEach { (name, value) ->
                 requestBuilder.addHeader(name, value)
             }
             val events = mutableListOf<JSONObject>()
+            var accepted = false
 
             fun completeWithPartialOrFailure(t: Throwable) {
                 if (!continuation.isActive) return
-                if (allowPartialOnFailure && events.isNotEmpty()) {
-                    continuation.resume(Result.success(events.toList()))
+                if (allowPartialOnFailure && (accepted || events.isNotEmpty())) {
+                    continuation.resume(BridgeSendResult(Result.success(events.toList()), accepted = accepted))
                 } else {
-                    continuation.resume(Result.failure(t.withReadableMessage()))
+                    continuation.resume(BridgeSendResult(Result.failure(t.withReadableMessage()), accepted = accepted))
                 }
             }
 
             fun completeOnClose() {
                 if (!continuation.isActive) return
-                if (allowPartialOnFailure && events.isNotEmpty()) {
-                    continuation.resume(Result.success(events.toList()))
+                if (allowPartialOnFailure && (accepted || events.isNotEmpty())) {
+                    continuation.resume(BridgeSendResult(Result.success(events.toList()), accepted = accepted))
                 } else {
-                    continuation.resume(Result.failure(IOException("WebSocket closed before bridge.done")))
+                    continuation.resume(BridgeSendResult(Result.failure(IOException("WebSocket closed before bridge.done")), accepted = accepted))
                 }
             }
 
@@ -266,12 +269,16 @@ class BridgeClient {
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
                         val json = runCatching { JSONObject(text) }.getOrNull()
+                        if (json?.optString("type") == "bridge.accepted") {
+                            accepted = true
+                            return
+                        }
                         if (json?.optString("type") == "bridge.heartbeat") {
                             return
                         }
                         if (json?.optString("type") == "bridge.done") {
                             if (continuation.isActive) {
-                                continuation.resume(Result.success(events.toList()))
+                                continuation.resume(BridgeSendResult(Result.success(events.toList()), accepted = accepted))
                             }
                             webSocket.close(1000, "done")
                             return
@@ -518,6 +525,15 @@ class BridgeClient {
     private companion object {
         const val TIMEOUT_MS = 10_000
     }
+}
+
+data class BridgeSendResult<T>(
+    val result: Result<T>,
+    val accepted: Boolean = false,
+)
+
+private inline fun <T, R> BridgeSendResult<T>.map(transform: (T) -> R): BridgeSendResult<R> {
+    return BridgeSendResult(result.map(transform), accepted = accepted)
 }
 
 private fun Throwable.withReadableMessage(): Throwable {

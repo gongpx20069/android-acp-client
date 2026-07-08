@@ -577,7 +577,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         selectedChatId = chat.id
         selectedTab = AppTab.Chats
         scope.launch {
-            bridgeClient.loadSession(machine, chat.id, agent.id, path, session.sessionId)
+            bridgeClient.loadSession(machine, chat.id, agent.id, path, session.sessionId).result
                 .onSuccess { events ->
                     upsertChat(chat.copy(messages = chat.messages + events.takeLast(sessionLoadMessageLimit)))
                 }
@@ -620,7 +620,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         if (index >= 0) approvals[index] = approval.copy(status = status)
         val machine = machines.firstOrNull { it.id == approval.machineId } ?: return
         scope.launch {
-            bridgeClient.sendApprovalDecision(machine, approval.id, if (status == ApprovalStatus.Approved) "approved" else "denied")
+            bridgeClient.sendApprovalDecision(machine, approval.id, if (status == ApprovalStatus.Approved) "approved" else "denied").result
         }
     }
 
@@ -663,7 +663,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         )
         upsertChat(loading)
         scope.launch {
-            bridgeClient.loadSession(machine, chat.id, chat.agentId, chat.workspacePath, session.sessionId)
+            bridgeClient.loadSession(machine, chat.id, chat.agentId, chat.workspacePath, session.sessionId).result
                 .onSuccess { events ->
                     upsertChat(loading.copy(messages = loading.messages + events.takeLast(sessionLoadMessageLimit)))
                 }
@@ -677,7 +677,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         modelDialogState = ModelDialogState(chat = chat, option = option)
         val machine = machines.firstOrNull { it.id == chat.machineId } ?: return
         scope.launch {
-            bridgeClient.refreshConfigOptions(machine, chat.id, chat.agentId, chat.workspacePath)
+            bridgeClient.refreshConfigOptions(machine, chat.id, chat.agentId, chat.workspacePath).result
                 .onSuccess { events ->
                     val current = chats.firstOrNull { it.id == chat.id } ?: chat
                     val refreshed = current.copy(messages = events.fold(current.messages) { messages, event -> messages.mergeMessage(event) })
@@ -711,7 +711,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         )
         upsertChat(changing)
         scope.launch {
-            bridgeClient.setConfigOption(machine, chat.id, chat.agentId, chat.workspacePath, option.id, value.value)
+            bridgeClient.setConfigOption(machine, chat.id, chat.agentId, chat.workspacePath, option.id, value.value).result
                 .onSuccess { events ->
                     upsertChat(changing.copy(messages = changing.messages + events))
                 }
@@ -859,7 +859,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                     upsertChat(updated)
                                     if (chat.id !in busyChatIds) busyChatIds.add(chat.id)
                                     scope.launch {
-                                        bridgeClient.sendChatPrompt(
+                                        val sendResult = bridgeClient.sendChatPrompt(
                                             machine = machine,
                                             chatId = chat.id,
                                             agentId = chat.agentId,
@@ -882,16 +882,18 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                                 addApproval(chat, request)
                                             },
                                         )
-                                            .onSuccess {
-                                                // Stream callbacks update the timeline while the prompt is running.
-                                            }
+                                        sendResult.result
                                             .onFailure {
                                                 val current = chats.firstOrNull { current -> current.id == chat.id } ?: updated
-                                                upsertChat(current.withMessage(MessageRole.System, strings.bridgeWebSocketFailed(it.message)))
+                                                if (!sendResult.accepted) {
+                                                    upsertChat(current.withMessage(MessageRole.System, strings.bridgeWebSocketFailed(it.message)))
+                                                }
                                             }
-                                            .also {
-                                                busyChatIds.remove(chat.id)
-                                            }
+                                        // If the bridge accepted the prompt but the transient WebSocket broke before bridge.done,
+                                        // keep the chat busy because the Agent may still be running on the bridge.
+                                        if (sendResult.result.isSuccess || !sendResult.accepted) {
+                                            busyChatIds.remove(chat.id)
+                                        }
                                     }
                                 }
                             },

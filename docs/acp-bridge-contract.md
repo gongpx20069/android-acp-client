@@ -186,6 +186,25 @@ Android sends a chat prompt through the bridge WebSocket:
 
 The bridge starts or reuses the ACP agent session for `chatId`, creates the session with `workspacePath` as ACP `cwd`, sends `session/prompt`, and streams ACP `session/update` messages back to Android. Tool call events are forwarded in the same shape produced by the ACP agent:
 
+Immediately after accepting a WebSocket request, the bridge sends an acknowledgement so Android knows the prompt reached the developer machine:
+
+```json
+{
+  "type": "bridge.accepted",
+  "chatId": "chat_123"
+}
+```
+
+While a long-running ACP turn is still processing and no ACP update is ready, the bridge may send heartbeat messages. Android must ignore these for chat history purposes:
+
+```json
+{
+  "type": "bridge.heartbeat"
+}
+```
+
+The stdlib bridge also handles WebSocket ping frames and responds with pong frames so OkHttp/client keepalive does not terminate the connection.
+
 ```json
 {
   "type": "session/update",

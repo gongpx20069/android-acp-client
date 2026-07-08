@@ -116,13 +116,15 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         while True:
-            message = _read_websocket_text(self.rfile)
+            message = _read_websocket_text(self.rfile, self.wfile)
             if message is None:
                 return
             try:
                 payload = json.loads(message)
             except json.JSONDecodeError:
                 payload = message
+            if not _write_websocket_json(self.wfile, {"type": "bridge.accepted", "chatId": payload.get("chatId") if isinstance(payload, dict) else None}):
+                return
             response_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
 
             def emit(response: dict[str, Any]) -> None:
@@ -144,9 +146,7 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
                     response = {"type": "bridge.heartbeat"}
                 if response is None:
                     break
-                try:
-                    _write_websocket_text(self.wfile, json.dumps(response, separators=(",", ":")))
-                except OSError:
+                if not _write_websocket_json(self.wfile, response):
                     return
 
 
@@ -164,41 +164,74 @@ def _websocket_accept(key: str) -> str:
     return base64.b64encode(digest).decode("ascii")
 
 
-def _read_websocket_text(stream: Any) -> str | None:
+def _read_websocket_text(stream: Any, output_stream: Any) -> str | None:
+    while True:
+        frame = _read_websocket_frame(stream)
+        if frame is None:
+            return None
+        opcode, payload = frame
+        if opcode == 0x1:
+            return payload.decode("utf-8")
+        if opcode == 0x8:
+            _write_websocket_frame(output_stream, 0x8, payload)
+            return None
+        if opcode == 0x9:
+            _write_websocket_frame(output_stream, 0xA, payload)
+            continue
+        if opcode == 0xA:
+            continue
+        return None
+
+
+def _read_websocket_frame(stream: Any) -> tuple[int, bytes] | None:
     header = stream.read(2)
     if len(header) < 2:
         return None
     first, second = header
     opcode = first & 0x0F
-    if opcode == 0x8:
-        return None
-    if opcode != 0x1:
-        return None
-
     masked = bool(second & 0x80)
     length = second & 0x7F
     if length == 126:
-        length = struct.unpack("!H", stream.read(2))[0]
+        extended = stream.read(2)
+        if len(extended) < 2:
+            return None
+        length = struct.unpack("!H", extended)[0]
     elif length == 127:
-        length = struct.unpack("!Q", stream.read(8))[0]
+        extended = stream.read(8)
+        if len(extended) < 8:
+            return None
+        length = struct.unpack("!Q", extended)[0]
 
     mask = stream.read(4) if masked else b""
+    if masked and len(mask) < 4:
+        return None
     payload = stream.read(length)
     if len(payload) < length:
         return None
     if masked:
         payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
-    return payload.decode("utf-8")
+    return opcode, payload
+
+
+def _write_websocket_json(stream: Any, payload: dict[str, Any]) -> bool:
+    try:
+        _write_websocket_text(stream, json.dumps(payload, separators=(",", ":")))
+        return True
+    except OSError:
+        return False
 
 
 def _write_websocket_text(stream: Any, message: str) -> None:
-    payload = message.encode("utf-8")
+    _write_websocket_frame(stream, 0x1, message.encode("utf-8"))
+
+
+def _write_websocket_frame(stream: Any, opcode: int, payload: bytes) -> None:
     length = len(payload)
     if length < 126:
-        header = struct.pack("!BB", 0x81, length)
+        header = struct.pack("!BB", 0x80 | opcode, length)
     elif length < 65536:
-        header = struct.pack("!BBH", 0x81, 126, length)
+        header = struct.pack("!BBH", 0x80 | opcode, 126, length)
     else:
-        header = struct.pack("!BBQ", 0x81, 127, length)
+        header = struct.pack("!BBQ", 0x80 | opcode, 127, length)
     stream.write(header + payload)
     stream.flush()

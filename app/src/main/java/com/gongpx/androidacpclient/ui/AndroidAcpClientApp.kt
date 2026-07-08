@@ -143,6 +143,9 @@ private data class AppStrings(
     val languageEnglish: String,
     val languageChinese: String,
     val languageDescription: String,
+    val sessionLoadHistory: String,
+    val sessionLoadHistoryDescription: String,
+    val sessionLoadHistoryLabel: String,
     val manageSettings: String,
     val currentVersion: (String) -> String,
     val checking: String,
@@ -255,6 +258,9 @@ private data class AppStrings(
             languageEnglish = "English",
             languageChinese = "中文",
             languageDescription = "System uses Chinese when the device language is Chinese; otherwise it uses English.",
+            sessionLoadHistory = "Session load history",
+            sessionLoadHistoryDescription = "Maximum number of recent messages to append when opening or resuming an existing ACP session.",
+            sessionLoadHistoryLabel = "Recent messages",
             manageSettings = "Manage AgentLink app behavior and releases.",
             currentVersion = { "Current version: $it" },
             checking = "Checking...",
@@ -355,6 +361,9 @@ private data class AppStrings(
             languageEnglish = "English",
             languageChinese = "中文",
             languageDescription = "跟随系统时，系统语言为中文则使用中文，其他语言使用 English。",
+            sessionLoadHistory = "Session load 历史",
+            sessionLoadHistoryDescription = "打开或恢复已有 ACP session 时，最多追加最近 N 条消息。",
+            sessionLoadHistoryLabel = "最近消息数量",
             manageSettings = "管理 AgentLink app 行为和版本更新。",
             currentVersion = { "当前版本：$it" },
             checking = "检查中...",
@@ -478,6 +487,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
     var modelDialogState by remember { mutableStateOf<ModelDialogState?>(null) }
     var updateState by remember { mutableStateOf(UpdateUiState()) }
     var languageMode by remember { mutableStateOf(appSettingsStore.loadLanguageMode()) }
+    var sessionLoadMessageLimit by remember { mutableStateOf(appSettingsStore.loadSessionLoadMessageLimit()) }
     val strings = languageMode.resolveStrings()
     val scope = rememberCoroutineScope()
 
@@ -569,7 +579,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         scope.launch {
             bridgeClient.loadSession(machine, chat.id, agent.id, path, session.sessionId)
                 .onSuccess { events ->
-                    upsertChat(chat.copy(messages = chat.messages + events.takeLast(MAX_RESUMED_CHAT_MESSAGES)))
+                    upsertChat(chat.copy(messages = chat.messages + events.takeLast(sessionLoadMessageLimit)))
                 }
                 .onFailure {
                     upsertChat(chat.withMessage(MessageRole.System, strings.openSessionFailed(it.message)))
@@ -655,7 +665,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         scope.launch {
             bridgeClient.loadSession(machine, chat.id, chat.agentId, chat.workspacePath, session.sessionId)
                 .onSuccess { events ->
-                    upsertChat(loading.copy(messages = loading.messages + events.takeLast(MAX_RESUMED_CHAT_MESSAGES)))
+                    upsertChat(loading.copy(messages = loading.messages + events.takeLast(sessionLoadMessageLimit)))
                 }
                 .onFailure {
                     upsertChat(loading.withMessage(MessageRole.System, strings.resumeFailed(it.message)))
@@ -916,6 +926,11 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                 languageMode = it
                                 appSettingsStore.saveLanguageMode(it)
                             },
+                            sessionLoadMessageLimit = sessionLoadMessageLimit,
+                            onSessionLoadMessageLimitChange = {
+                                sessionLoadMessageLimit = it
+                                appSettingsStore.saveSessionLoadMessageLimit(it)
+                            },
                             onCheckForUpdate = { checkForUpdate(manual = true) },
                             onOpenUpdate = ::openUpdate,
                         )
@@ -949,10 +964,13 @@ private fun SettingsScreen(
     updateState: UpdateUiState,
     languageMode: AppLanguageMode,
     onLanguageModeChange: (AppLanguageMode) -> Unit,
+    sessionLoadMessageLimit: Int,
+    onSessionLoadMessageLimitChange: (Int) -> Unit,
     onCheckForUpdate: () -> Unit,
     onOpenUpdate: (AppUpdate) -> Unit,
 ) {
     val strings = LocalAppStrings.current
+    var sessionLoadLimitText by remember(sessionLoadMessageLimit) { mutableStateOf(sessionLoadMessageLimit.toString()) }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -989,6 +1007,25 @@ private fun SettingsScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+        item {
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(strings.sessionLoadHistory, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(strings.sessionLoadHistoryDescription, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = sessionLoadLimitText,
+                        onValueChange = { raw ->
+                            val digits = raw.filter { it.isDigit() }.take(4)
+                            sessionLoadLimitText = digits
+                            digits.toIntOrNull()?.takeIf { it > 0 }?.let(onSessionLoadMessageLimitChange)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text(strings.sessionLoadHistoryLabel) },
+                    )
                 }
             }
         }
@@ -2193,8 +2230,6 @@ private fun Chat.withActivity(title: String, summary: String, details: String): 
         ),
     )
 }
-
-private const val MAX_RESUMED_CHAT_MESSAGES = 50
 
 private fun Chat.availableCommands(): List<AvailableCommand> {
     val latest = messages.lastOrNull { it.kind == ChatMessageKind.CommandUpdate && !it.details.isNullOrBlank() } ?: return emptyList()

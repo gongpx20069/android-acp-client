@@ -23,6 +23,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - In Chat detail, the history list and prompt composer move above the Android soft keyboard while the header stays anchored.
 - Horizontally scrollable command chips above the prompt box.
 - Bilingual UI with a Settings language selector: System, English, or Chinese. System mode uses Chinese only when the device language is Chinese; otherwise it uses English.
+- Settings includes a Session load history limit. It defaults to 5 and controls how many recent messages are appended when opening or resuming an existing ACP session.
 - Built-in `model` chip that opens a model picker from ACP session config options.
 - Common command chips are prioritized before other ACP-advertised commands: `model`, `resume`, and `allow-all`.
 - Built-in `allow-all` opens an on/off picker when the ACP agent exposes the `allow_all` session config option.
@@ -98,7 +99,7 @@ ACP slash commands are not the same as Copilot CLI's interactive slash commands.
 
 AgentLink displays advertised commands as chips without the slash prefix. Tapping a command chip sends `/<command>` as a prompt.
 
-`resume` is a built-in AgentLink chip rather than a prompt command. It opens a session picker backed by ACP `session/list`; choosing a session calls `session/load` for the current chat and workspace. AgentLink appends at most the latest 50 loaded chat messages from a resumed session. Typing `/resume` in the prompt is still treated as plain prompt text unless the ACP agent explicitly advertises a `resume` slash command.
+`resume` is a built-in AgentLink chip rather than a prompt command. It opens a session picker backed by ACP `session/list`; choosing a session calls `session/load` for the current chat and workspace. AgentLink appends at most the latest N loaded chat messages from a resumed session, where N is configured in Settings and defaults to 5. Typing `/resume` in the prompt is still treated as plain prompt text unless the ACP agent explicitly advertises a `resume` slash command.
 
 `model` is also a built-in AgentLink chip. It opens a model picker backed by the latest ACP `config_option_update` option with `id == "model"`, `category == "model"`, or a model-like name. Opening the picker asks the bridge to refresh config options for the current chat, creating an ACP session first if needed. Selecting a model sends ACP `session/set_config_option` through the bridge and updates the picker with the returned `configOptions`. If options have not arrived yet, the picker explains that config options are still loading instead of sending `/model` as a prompt.
 

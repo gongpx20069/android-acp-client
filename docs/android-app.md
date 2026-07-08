@@ -22,6 +22,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - Fixed bottom prompt box for sending chat messages.
 - In Chat detail, the history list and prompt composer move above the Android soft keyboard while the header stays anchored.
 - Horizontally scrollable command chips above the prompt box.
+- Chat prompt WebSocket calls disable the client read timeout so long-running Agent turns are not aborted while waiting for ACP updates.
 - Bilingual UI with a Settings language selector: System, English, or Chinese. System mode uses Chinese only when the device language is Chinese; otherwise it uses English.
 - Settings includes a Session load history limit. It defaults to 5 and controls how many recent messages are appended when opening or resuming an existing ACP session.
 - Built-in `model` chip that opens a model picker from ACP session config options.

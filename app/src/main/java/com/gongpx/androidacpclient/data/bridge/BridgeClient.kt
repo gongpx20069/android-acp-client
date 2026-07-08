@@ -16,6 +16,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -29,7 +30,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class BridgeClient {
-    private val webSocketClient = OkHttpClient()
+    private val webSocketClient = OkHttpClient.Builder()
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .build()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     suspend fun redeemPairing(payload: PairingPayload): Result<Machine> = withContext(Dispatchers.IO) {

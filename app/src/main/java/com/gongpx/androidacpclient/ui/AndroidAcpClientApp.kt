@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -1299,54 +1300,61 @@ private fun ChatDetailScreen(
             }
         }
 
-        LazyColumn(
-            state = listState,
+        Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
-            contentPadding = PaddingValues(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .imePadding(),
         ) {
-            items(chat.messages) { item ->
-                ChatTimelineItem(item)
-            }
-        }
-
-        Surface(tonalElevation = 4.dp) {
-            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                if (commands.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        commands.forEach { command ->
-                            CommandPill(command = command, onClick = { onCommand(command) })
-                        }
-                    }
-                    Spacer(Modifier.height(5.dp))
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                contentPadding = PaddingValues(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(chat.messages) { item ->
+                    ChatTimelineItem(item)
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CompactPromptField(
-                        value = message,
-                        onValueChange = { message = it },
-                        modifier = Modifier.weight(1f),
-                    )
-                    Button(
-                        enabled = message.isNotBlank() && !isBusy,
-                        onClick = {
-                            onSendMessage(message)
-                            message = ""
-                        },
-                        modifier = Modifier.defaultMinSize(minWidth = 68.dp, minHeight = 42.dp),
+            }
+
+            Surface(tonalElevation = 4.dp) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                    if (commands.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            commands.forEach { command ->
+                                CommandPill(command = command, onClick = { onCommand(command) })
+                            }
+                        }
+                        Spacer(Modifier.height(5.dp))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(strings.send)
+                        CompactPromptField(
+                            value = message,
+                            onValueChange = { message = it },
+                            modifier = Modifier.weight(1f),
+                        )
+                        Button(
+                            enabled = message.isNotBlank() && !isBusy,
+                            onClick = {
+                                onSendMessage(message)
+                                message = ""
+                            },
+                            modifier = Modifier.defaultMinSize(minWidth = 68.dp, minHeight = 42.dp),
+                        ) {
+                            Text(strings.send)
+                        }
                     }
                 }
             }

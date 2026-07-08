@@ -20,6 +20,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - Chat list rows and the chat detail header show a small status dot: busy while a prompt is running, idle otherwise.
 - Opening a chat automatically scrolls to the newest message.
 - Fixed bottom prompt box for sending chat messages.
+- In Chat detail, the history list and prompt composer move above the Android soft keyboard while the header stays anchored.
 - Horizontally scrollable command chips above the prompt box.
 - Bilingual UI with a Settings language selector: System, English, or Chinese. System mode uses Chinese only when the device language is Chinese; otherwise it uses English.
 - Built-in `model` chip that opens a model picker from ACP session config options.

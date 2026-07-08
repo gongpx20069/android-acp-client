@@ -24,9 +24,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -74,6 +76,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.AnnotatedString
@@ -583,7 +586,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         scope.launch {
             bridgeClient.loadSession(machine, chat.id, agent.id, path, session.sessionId).result
                 .onSuccess { events ->
-                    upsertChat(chat.copy(messages = chat.messages + events.takeLast(sessionLoadMessageLimit)))
+                    upsertChat(chat.copy(messages = chat.messages + events.latestVisibleHistory(sessionLoadMessageLimit)))
                 }
                 .onFailure {
                     upsertChat(chat.withMessage(MessageRole.System, strings.openSessionFailed(it.message)))
@@ -676,7 +679,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         scope.launch {
             bridgeClient.loadSession(machine, chat.id, chat.agentId, chat.workspacePath, session.sessionId).result
                 .onSuccess { events ->
-                    upsertChat(loading.copy(messages = loading.messages + events.takeLast(sessionLoadMessageLimit)))
+                    upsertChat(loading.copy(messages = loading.messages + events.latestVisibleHistory(sessionLoadMessageLimit)))
                 }
                 .onFailure {
                     upsertChat(loading.withMessage(MessageRole.System, strings.resumeFailed(it.message)))
@@ -1370,7 +1373,13 @@ private fun ChatDetailScreen(
             listState.scrollToItem(chat.messages.lastIndex)
         }
     }
-    val chatPadding = PaddingValues(top = padding.calculateTopPadding())
+    val density = LocalDensity.current
+    val isImeVisible = WindowInsets.ime.getBottom(density) > 0
+    val chatPadding = if (isImeVisible) {
+        PaddingValues(top = padding.calculateTopPadding())
+    } else {
+        padding
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -2290,6 +2299,11 @@ private fun Chat.withActivity(title: String, summary: String, details: String): 
             activityId = title,
         ),
     )
+}
+
+private fun List<ChatMessage>.latestVisibleHistory(limit: Int): List<ChatMessage> {
+    return filterNot { it.kind == ChatMessageKind.CommandUpdate || it.kind == ChatMessageKind.ConfigUpdate }
+        .takeLast(limit.coerceAtLeast(1))
 }
 
 private fun Chat.availableCommands(): List<AvailableCommand> {

@@ -319,6 +319,35 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(responses_holder[0][0]["update"]["status"], "allow-once")
 
+    def test_concurrent_prompt_for_same_chat_is_rejected(self) -> None:
+        manager = BlockingAgentManager()
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=manager,
+        )
+        first_responses: list[list[dict]] = []
+
+        def first_prompt() -> None:
+            first_responses.append(
+                runtime.websocket_responses({"type": "chat.prompt", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "first"})
+            )
+
+        thread = threading.Thread(target=first_prompt)
+        thread.start()
+        self.assertTrue(manager.started.wait(timeout=5))
+
+        second = runtime.websocket_responses({"type": "chat.prompt", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "second"})
+
+        manager.release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(manager.prompts, ["first"])
+        self.assertEqual(second[0]["update"]["toolCallId"], "chat_busy")
+        self.assertIn("already processing", second[0]["update"]["content"]["error"])
+        self.assertEqual(first_responses[0][0]["update"]["sessionUpdate"], "agent_message_chunk")
+
 
 class FakeAgentManager:
     def prompt(self, request: AcpPromptRequest, permission_callback=None):
@@ -427,6 +456,27 @@ class FakeAgentManager:
                             "options": [{"value": value, "name": value}],
                         }
                     ],
+                },
+            }
+        ]
+
+
+class BlockingAgentManager(FakeAgentManager):
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.prompts: list[str] = []
+
+    def prompt(self, request: AcpPromptRequest, permission_callback=None):
+        self.prompts.append(request.prompt)
+        self.started.set()
+        self.release.wait(timeout=5)
+        return [
+            {
+                "type": "session/update",
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": "done"},
                 },
             }
         ]

@@ -74,6 +74,8 @@ class BridgeRuntime:
         self._pending_approvals: dict[str, PendingApproval] = {}
         self._approval_lock = threading.Lock()
         self._agent_chunk_logs: dict[str, AgentChunkLogBuffer] = {}
+        self._busy_chats: set[str] = set()
+        self._busy_lock = threading.Lock()
 
     def health_response(self) -> dict[str, Any]:
         return {"status": "ok", "bridgeVersion": __version__}
@@ -173,34 +175,53 @@ class BridgeRuntime:
         prompt = _string_or_default(payload.get("content"), "")
         agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
         workspace_path = _string_or_default(payload.get("workspacePath"), "")
-        try:
-            updates = self.agent_manager.prompt(
-                AcpPromptRequest(
-                    chat_id=chat_id,
-                    agent_id=agent_id,
-                    workspace_path=workspace_path,
-                    prompt=prompt,
-                ),
-                permission_callback=lambda message: self._request_permission(chat_id, message, emit),
-            )
-        except AcpAgentError as exc:
-            updates = [
+        if not self._try_mark_chat_busy(chat_id):
+            return [
                 {
                     "type": "session/update",
                     "chatId": chat_id,
                     "update": {
                         "sessionUpdate": "tool_call_update",
-                        "toolCallId": "agent_start",
-                        "title": "Agent runtime",
-                        "kind": "execute",
+                        "toolCallId": "chat_busy",
+                        "title": "Chat prompt",
+                        "kind": "other",
                         "status": "failed",
-                        "content": {"error": str(exc)},
+                        "content": {"error": "Chat is already processing a prompt."},
                     },
-                }
+                },
+                {"type": "bridge.done", "chatId": chat_id},
             ]
-        for update in updates:
-            update.setdefault("chatId", chat_id)
-        return updates + [{"type": "bridge.done", "chatId": chat_id}]
+        try:
+            try:
+                updates = self.agent_manager.prompt(
+                    AcpPromptRequest(
+                        chat_id=chat_id,
+                        agent_id=agent_id,
+                        workspace_path=workspace_path,
+                        prompt=prompt,
+                    ),
+                    permission_callback=lambda message: self._request_permission(chat_id, message, emit),
+                )
+            except AcpAgentError as exc:
+                updates = [
+                    {
+                        "type": "session/update",
+                        "chatId": chat_id,
+                        "update": {
+                            "sessionUpdate": "tool_call_update",
+                            "toolCallId": "agent_start",
+                            "title": "Agent runtime",
+                            "kind": "execute",
+                            "status": "failed",
+                            "content": {"error": str(exc)},
+                        },
+                    }
+                ]
+            for update in updates:
+                update.setdefault("chatId", chat_id)
+            return updates + [{"type": "bridge.done", "chatId": chat_id}]
+        finally:
+            self._mark_chat_idle(chat_id)
 
     def _approval_decision_updates(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         approval_id = _string_or_default(payload.get("approvalId"), "unknown-approval")
@@ -295,6 +316,17 @@ class BridgeRuntime:
             pending.decision = decision
             pending.condition.notify_all()
         return True
+
+    def _try_mark_chat_busy(self, chat_id: str) -> bool:
+        with self._busy_lock:
+            if chat_id in self._busy_chats:
+                return False
+            self._busy_chats.add(chat_id)
+            return True
+
+    def _mark_chat_idle(self, chat_id: str) -> None:
+        with self._busy_lock:
+            self._busy_chats.discard(chat_id)
 
     def _session_set_config_option_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")

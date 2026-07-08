@@ -222,6 +222,9 @@ private data class AppStrings(
     val approvalRequiredTitle: String,
     val bridgeWebSocketFailed: (String?) -> String,
     val chatCreatedSystem: String,
+    val chatStatusBusy: String,
+    val chatStatusReady: String,
+    val chatStatusOffline: String,
     val loadingExistingAcpSession: (String) -> String,
     val openSessionFailed: (String?) -> String,
     val resumeFailed: (String?) -> String,
@@ -331,6 +334,9 @@ private data class AppStrings(
             approvalRequiredTitle = "Approval required",
             bridgeWebSocketFailed = { "Bridge WebSocket failed: ${it.orUnknownError()}" },
             chatCreatedSystem = "Chat created. Workspace is selected per Chat, not at bridge startup.",
+            chatStatusBusy = "Busy",
+            chatStatusReady = "Ready",
+            chatStatusOffline = "Offline",
             loadingExistingAcpSession = { "Loading existing ACP session $it." },
             openSessionFailed = { "Open session failed: ${it.orUnknownError()}" },
             resumeFailed = { "Resume failed: ${it.orUnknownError()}" },
@@ -424,6 +430,9 @@ private data class AppStrings(
             approvalRequiredTitle = "需要 Approval",
             bridgeWebSocketFailed = { "Bridge WebSocket 失败：${it.orUnknownErrorZh()}" },
             chatCreatedSystem = "Chat 已创建。Workspace 按 Chat 选择，不绑定在 bridge 启动时。",
+            chatStatusBusy = "忙碌",
+            chatStatusReady = "空闲",
+            chatStatusOffline = "断连",
             loadingExistingAcpSession = { "正在加载已有 ACP session $it。" },
             openSessionFailed = { "打开 session 失败：${it.orUnknownErrorZh()}" },
             resumeFailed = { "恢复失败：${it.orUnknownErrorZh()}" },
@@ -832,6 +841,8 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                 val machine = machines.firstOrNull { it.id == chat.machineId }
                                 if (machine == null) {
                                     upsertChat(chat.withMessage(MessageRole.System, strings.machineUnavailable))
+                                } else if (chat.id in busyChatIds) {
+                                    // Ignore duplicate taps while the current prompt is still running.
                                 } else {
                                     val updated = chat.withMessage(MessageRole.User, message)
                                     upsertChat(updated)
@@ -1328,7 +1339,7 @@ private fun ChatDetailScreen(
                         modifier = Modifier.weight(1f),
                     )
                     Button(
-                        enabled = message.isNotBlank(),
+                        enabled = message.isNotBlank() && !isBusy,
                         onClick = {
                             onSendMessage(message)
                             message = ""
@@ -1362,16 +1373,36 @@ private fun CommandPill(command: AvailableCommand, onClick: () -> Unit) {
 
 @Composable
 private fun ChatStatusDot(isBusy: Boolean, connectionState: ConnectionState) {
-    val color = when {
-        isBusy -> Color(0xFFDC2626)
-        connectionState == ConnectionState.Online -> Color(0xFF16A34A)
-        else -> Color(0xFF9CA3AF)
+    val strings = LocalAppStrings.current
+    val (color, label) = when {
+        isBusy -> Color(0xFFDC2626) to strings.chatStatusBusy
+        connectionState == ConnectionState.Online -> Color(0xFF16A34A) to strings.chatStatusReady
+        else -> Color(0xFF9CA3AF) to strings.chatStatusOffline
     }
-    Box(
-        modifier = Modifier
-            .size(12.dp)
-            .background(color, RoundedCornerShape(999.dp)),
-    )
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = color.copy(alpha = 0.10f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.58f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(color, RoundedCornerShape(999.dp)),
+            )
+            Text(
+                text = label,
+                fontSize = 9.sp,
+                lineHeight = 9.sp,
+                color = color,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
 }
 
 @Composable

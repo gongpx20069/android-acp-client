@@ -28,6 +28,11 @@ AgentLink 通过 ACP（Agent Client Protocol）和 agent 通信。当前 bridge 
 | **OpenAI Codex CLI** | 尚未接入 | 取决于具体 CLI | 目前没有稳定的 AgentLink 集成。需要 ACP-compatible CLI command 后才能接入。 |
 | **Cursor Agent / Cursor CLI** | 尚未接入 | 取决于具体 CLI | 当前 bridge 没有暴露 Cursor agent。 |
 | **Aider** | 尚未接入 | `aider` | Aider 是常见 coding assistant，但 AgentLink 当前没有它的 ACP adapter。 |
+| **Qoder / QCode** | 尚未接入 | 未确认 | 当前没有接入公开可用的 AgentLink-compatible ACP CLI command。 |
+| **通义灵码 / CodeFuse** | 尚未接入 | 未确认 | 公开文档目前没有可让 AgentLink 直接启动的稳定 `--acp` 命令。 |
+| **豆包 / MarsCode** | 尚未接入 | 未确认 | 当前没有接入 AgentLink-compatible ACP CLI command。 |
+| **百度 Comate** | 尚未接入 | 未确认 | 当前没有接入 AgentLink-compatible ACP CLI command。 |
+| **CodeGeeX** | 尚未接入 | 未确认 | 当前没有接入 AgentLink-compatible ACP adapter。 |
 
 App 里可能会显示 missing/unavailable 状态。今天能真正用于 Chat 的，是表里“当前已支持”的 agent。
 

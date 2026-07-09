@@ -28,6 +28,11 @@ AgentLink talks to agents through ACP (Agent Client Protocol). The bridge curren
 | **OpenAI Codex CLI** | Not wired yet | varies | No stable AgentLink integration yet. Needs an ACP-compatible CLI command before it can be added. |
 | **Cursor Agent / Cursor CLI** | Not wired yet | varies | Not currently exposed by the bridge. |
 | **Aider** | Not wired yet | `aider` | Aider is a popular coding assistant, but AgentLink does not currently have an ACP adapter for it. |
+| **Qoder / QCode** | Not wired yet | not confirmed | No public AgentLink-compatible ACP CLI command is wired today. |
+| **Alibaba Tongyi Lingma / CodeFuse** | Not wired yet | not confirmed | Public docs do not currently provide a stable `--acp` command for AgentLink to launch. |
+| **ByteDance Doubao / MarsCode** | Not wired yet | not confirmed | No AgentLink-compatible ACP CLI command is wired today. |
+| **Baidu Comate** | Not wired yet | not confirmed | No AgentLink-compatible ACP CLI command is wired today. |
+| **CodeGeeX** | Not wired yet | not confirmed | No AgentLink-compatible ACP adapter is wired today. |
 
 In the app, missing agents may still appear as unavailable/missing depending on bridge discovery. Only the “Supported now” agents can be selected for working chats today.
 

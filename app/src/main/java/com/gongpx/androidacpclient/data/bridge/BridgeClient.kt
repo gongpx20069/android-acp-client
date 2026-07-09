@@ -143,6 +143,25 @@ class BridgeClient {
         )
     }
 
+    suspend fun loadRecentSession(machine: Machine, chatId: String, agentId: String, workspacePath: String, sessionId: String, limit: Int): BridgeSendResult<List<ChatMessage>> {
+        return sendRawBridgeMessage(
+            machine,
+            JSONObject()
+                .put("type", "session.loadRecent")
+                .put("chatId", chatId)
+                .put("agentId", agentId)
+                .put("workspacePath", workspacePath)
+                .put("sessionId", sessionId)
+                .put("limit", limit),
+            allowPartialOnFailure = true,
+        ).map { events ->
+            val result = events.firstOrNull { it.optString("type") == "session.loadRecent.result" }
+                ?: throw IOException("Bridge did not return recent session history.")
+            result.optString("error").takeIf { it.isNotBlank() }?.let { throw IOException(it) }
+            result.optJSONArray("messages").orEmpty().toHistoryMessages()
+        }
+    }
+
     suspend fun setConfigOption(
         machine: Machine,
         chatId: String,
@@ -449,6 +468,17 @@ class BridgeClient {
                     activityId = "available_commands",
                 )
             }
+            "user_message_chunk" -> {
+                val content = optJSONObject("content")
+                val text = content?.optString("text").orEmpty().ifBlank { optString("text") }
+                if (text.isBlank()) return null
+                ChatMessage(
+                    role = MessageRole.User,
+                    text = text,
+                    timestampMillis = System.currentTimeMillis(),
+                    activityId = optString("messageId").ifBlank { "user_message" },
+                )
+            }
             "tool_call", "tool_call_update" -> {
                 val content = optJSONObject("content")
                 val status = optString("status").ifBlank { if (sessionUpdate == "tool_call") "started" else "updated" }
@@ -584,6 +614,23 @@ class BridgeClient {
                 updatedAt = item.optString("updatedAt").ifBlank { null },
             )
         }
+    }
+
+    private fun JSONArray?.orEmpty(): JSONArray = this ?: JSONArray()
+
+    private fun JSONArray.toHistoryMessages(): List<ChatMessage> {
+        return List(length()) { index ->
+            val item = getJSONObject(index)
+            val role = when (item.optString("role")) {
+                "user" -> MessageRole.User
+                else -> MessageRole.Agent
+            }
+            ChatMessage(
+                role = role,
+                text = item.optString("text"),
+                timestampMillis = System.currentTimeMillis(),
+            )
+        }.filter { it.text.isNotBlank() }
     }
 
     private companion object {

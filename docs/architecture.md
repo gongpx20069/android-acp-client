@@ -196,7 +196,7 @@ On reconnect, Android sends `lastEventId`:
 
 The bridge replays cached events with `eventId > lastEventId`, then sends the current `chat.status`. This prevents lost tool updates, approval requests, and `done` events across mobile network interruptions.
 
-If Android's `lastEventId` is older than the bridge cache window, the bridge returns a resync-required event so Android can call `session/load` or ask the user to reopen the session.
+If Android's `lastEventId` is older than the bridge cache window, the bridge returns a resync-required event so Android can call `session.loadRecent` or ask the user to reopen the session.
 
 ### Operation Lifecycle
 

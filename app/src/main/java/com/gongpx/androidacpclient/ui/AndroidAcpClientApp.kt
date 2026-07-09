@@ -585,9 +585,9 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         selectedChatId = chat.id
         selectedTab = AppTab.Chats
         scope.launch {
-            bridgeClient.loadSession(machine, chat.id, agent.id, path, session.sessionId).result
-                .onSuccess { events ->
-                    upsertChat(chat.copy(messages = chat.messages + events.latestVisibleHistory(sessionLoadMessageLimit)))
+            bridgeClient.loadRecentSession(machine, chat.id, agent.id, path, session.sessionId, sessionLoadMessageLimit).result
+                .onSuccess { messages ->
+                    upsertChat(chat.copy(messages = messages.ifEmpty { chat.messages }))
                 }
                 .onFailure {
                     upsertChat(chat.withMessage(MessageRole.System, strings.openSessionFailed(it.message)))
@@ -684,9 +684,9 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         )
         upsertChat(loading)
         scope.launch {
-            bridgeClient.loadSession(machine, chat.id, chat.agentId, chat.workspacePath, session.sessionId).result
-                .onSuccess { events ->
-                    upsertChat(loading.copy(messages = loading.messages + events.latestVisibleHistory(sessionLoadMessageLimit)))
+            bridgeClient.loadRecentSession(machine, chat.id, chat.agentId, chat.workspacePath, session.sessionId, sessionLoadMessageLimit).result
+                .onSuccess { messages ->
+                    upsertChat(loading.copy(messages = loading.messages + messages))
                 }
                 .onFailure {
                     upsertChat(loading.withMessage(MessageRole.System, strings.resumeFailed(it.message)))
@@ -2307,11 +2307,6 @@ private fun Chat.withActivity(title: String, summary: String, details: String): 
             activityId = title,
         ),
     )
-}
-
-private fun List<ChatMessage>.latestVisibleHistory(limit: Int): List<ChatMessage> {
-    return filter { it.kind == ChatMessageKind.Message }
-        .takeLast(limit.coerceAtLeast(1))
 }
 
 private fun Chat.availableCommands(): List<AvailableCommand> {

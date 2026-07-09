@@ -247,6 +247,48 @@ Bridge behavior:
 - Create or load ACP session using `workspacePath` as `cwd`.
 - Return chat/session state.
 
+### Load Recent Session History
+
+Android uses this when opening an existing ACP session or using the built-in resume picker:
+
+```json
+{
+  "type": "session.loadRecent",
+  "chatId": "chat_123",
+  "agentId": "copilot-cli",
+  "workspacePath": "D:\\repos\\android-agent-link",
+  "sessionId": "sess_abc",
+  "limit": 50
+}
+```
+
+Bridge behavior:
+
+- Start the ACP agent and call ACP `session/load`.
+- Drain replayed ACP `session/update` history internally until replay becomes idle, or until the bridge hits its safety timeout/event cap.
+- Do not stream old replay events to Android as chat timeline events.
+- Convert `user_message_chunk` and `agent_message_chunk` updates into visible message bubbles.
+- Return only the latest `limit` visible user/agent messages.
+- Keep the loaded ACP session attached to `chatId` for future prompts.
+
+Response:
+
+```json
+{
+  "type": "session.loadRecent.result",
+  "chatId": "chat_123",
+  "sessionId": "sess_abc",
+  "messages": [
+    { "role": "user", "text": "What changed?" },
+    { "role": "agent", "text": "I updated the bridge startup docs." }
+  ],
+  "scannedEvents": 842,
+  "truncated": false
+}
+```
+
+`truncated=true` means the bridge reached its safety cap before replay went idle, so the snapshot is best-effort.
+
 ### Send Prompt
 
 Android sends a chat prompt over the attached chat WebSocket:
@@ -382,9 +424,9 @@ Bridge response:
 }
 ```
 
-### Load Session
+### Load Session (legacy/debug)
 
-Android loads a selected session into the current chat:
+The older `session.load` request loads a selected session and streams ACP replay updates directly to Android:
 
 ```json
 {
@@ -397,7 +439,7 @@ Android loads a selected session into the current chat:
 }
 ```
 
-The bridge calls ACP `session/load`, forwards replayed `session/update` notifications as event-log entries, then sends `operation.done` and the current `chat.status`.
+This is retained for debugging and low-level compatibility. Normal existing-session UX should use `session.loadRecent` instead so old replay does not stream into the visible timeline; the bridge scans ACP replay internally and returns only the latest visible message snapshot.
 
 ### Set Config Option
 

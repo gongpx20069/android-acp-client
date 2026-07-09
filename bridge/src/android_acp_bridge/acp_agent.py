@@ -5,6 +5,7 @@ import queue
 import shutil
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -63,6 +64,18 @@ class AcpAgentManager:
         session, updates = AcpAgentSession.load(agent_id, workspace_path, session_id)
         self._sessions[chat_id] = session
         return updates
+
+    def load_recent_session(self, chat_id: str, agent_id: str, workspace_path: str, session_id: str, limit: int) -> dict[str, Any]:
+        old_session = self._sessions.pop(chat_id, None)
+        if old_session is not None:
+            old_session.stop()
+        session, updates, scanned_events, truncated = AcpAgentSession.load_recent(agent_id, workspace_path, session_id, limit)
+        self._sessions[chat_id] = session
+        return {
+            "updates": updates,
+            "scannedEvents": scanned_events,
+            "truncated": truncated,
+        }
 
     def refresh_config_options(self, chat_id: str, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
         session = self._sessions.get(chat_id)
@@ -166,6 +179,25 @@ class AcpAgentSession:
         )
         session._session_id = session_id
         return session, updates
+
+    @classmethod
+    def load_recent(cls, agent_id: str, workspace_path: str, session_id: str, limit: int) -> tuple[AcpAgentSession, list[dict[str, Any]], int, bool]:
+        workspace = _resolve_workspace(workspace_path)
+        session = cls.start_without_session(agent_id, workspace_path)
+        _result, updates, scanned_events, truncated = session._request_and_drain(
+            "session/load",
+            {
+                "sessionId": session_id,
+                "cwd": str(workspace),
+                "mcpServers": [],
+            },
+            timeout_seconds=120,
+            drain_idle_seconds=0.8,
+            drain_timeout_seconds=30,
+            max_updates=max(limit * 20, 1000),
+        )
+        session._session_id = session_id
+        return session, updates, scanned_events, truncated
 
     def prompt(self, prompt: str, update_callback: UpdateCallback | None = None) -> list[dict[str, Any]]:
         _result, updates = self._request(
@@ -275,6 +307,60 @@ class AcpAgentSession:
                         update_callback(wire_update)
                     else:
                         updates.append(wire_update)
+            elif method_name == "session/request_permission":
+                self._handle_permission_request(message)
+
+    def _request_and_drain(
+        self,
+        method: str,
+        params: dict[str, Any],
+        timeout_seconds: int,
+        drain_idle_seconds: float,
+        drain_timeout_seconds: float,
+        max_updates: int,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], int, bool]:
+        request_id = self._next_id
+        self._next_id += 1
+        self._write_json({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+
+        result: dict[str, Any] = {}
+        updates: list[dict[str, Any]] = []
+        seen_result = False
+        scanned_events = 0
+        truncated = False
+        drain_deadline = 0.0
+
+        while True:
+            timeout = timeout_seconds if not seen_result else max(0.0, min(drain_idle_seconds, drain_deadline - time.monotonic()))
+            if seen_result and timeout <= 0:
+                return result, updates, scanned_events, True
+            try:
+                message = self._output_queue.get(timeout=timeout)
+            except queue.Empty as exc:
+                if seen_result:
+                    return result, updates, scanned_events, truncated
+                raise AcpAgentError(f"Timed out waiting for ACP response to {method}.") from exc
+
+            if message.get("id") == request_id:
+                if "error" in message:
+                    raise AcpAgentError(f"ACP {method} failed: {message['error']}")
+                result_value = message.get("result")
+                result = result_value if isinstance(result_value, dict) else {}
+                seen_result = True
+                drain_deadline = time.monotonic() + drain_timeout_seconds
+                continue
+
+            method_name = message.get("method")
+            if method_name == "session/update":
+                params_value = message.get("params") if isinstance(message.get("params"), dict) else {}
+                update = params_value.get("update") if isinstance(params_value, dict) else None
+                if isinstance(update, dict):
+                    scanned_events += 1
+                    if update.get("sessionUpdate") == "config_option_update" and isinstance(update.get("configOptions"), list):
+                        self._latest_config_options = update["configOptions"]
+                    updates.append({"type": "session/update", "update": update})
+                    if len(updates) >= max_updates:
+                        return result, updates, scanned_events, True
             elif method_name == "session/request_permission":
                 self._handle_permission_request(message)
 

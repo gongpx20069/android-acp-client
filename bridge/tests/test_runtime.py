@@ -280,6 +280,32 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(responses[0]["update"]["sessionUpdate"], "agent_message_chunk")
         self.assertEqual(responses[-1]["type"], "bridge.done")
 
+    def test_session_load_recent_returns_latest_visible_messages(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+
+        responses = runtime.websocket_responses(
+            {
+                "type": "session.loadRecent",
+                "chatId": "chat_1",
+                "agentId": "copilot-cli",
+                "workspacePath": "D:\\repo",
+                "sessionId": "sess_1",
+                "limit": 2,
+            }
+        )
+
+        result = responses[0]
+        self.assertEqual(result["type"], "session.loadRecent.result")
+        self.assertEqual(result["sessionId"], "sess_1")
+        self.assertEqual(result["scannedEvents"], 4)
+        self.assertEqual(result["messages"], [{"role": "user", "text": "new question"}, {"role": "agent", "text": "new answer"}])
+        self.assertEqual(responses[-1]["type"], "bridge.done")
+
     def test_session_set_config_option_returns_config_update(self) -> None:
         runtime = BridgeRuntime(
             config=BridgeConfig(machine_name="devbox"),
@@ -441,6 +467,18 @@ class FakeAgentManager:
                 },
             }
         ]
+
+    def load_recent_session(self, chat_id: str, agent_id: str, workspace_path: str, session_id: str, limit: int):
+        return {
+            "updates": [
+                {"type": "session/update", "update": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "old question"}}},
+                {"type": "session/update", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "old answer"}}},
+                {"type": "session/update", "update": {"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "new question"}}},
+                {"type": "session/update", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "new answer"}}},
+            ],
+            "scannedEvents": 4,
+            "truncated": False,
+        }
 
     def refresh_config_options(self, chat_id: str, agent_id: str, workspace_path: str):
         return [

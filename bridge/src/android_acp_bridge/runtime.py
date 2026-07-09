@@ -57,6 +57,9 @@ class AgentManager(Protocol):
     def load_session(self, chat_id: str, agent_id: str, workspace_path: str, session_id: str) -> list[dict[str, Any]]:
         ...
 
+    def load_recent_session(self, chat_id: str, agent_id: str, workspace_path: str, session_id: str, limit: int) -> dict[str, Any]:
+        ...
+
     def refresh_config_options(self, chat_id: str, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
         ...
 
@@ -155,6 +158,10 @@ class BridgeRuntime:
             return responses
         if message_type == "session.load":
             responses = self._session_load_response(payload)
+            self._log_responses(responses)
+            return responses
+        if message_type == "session.loadRecent":
+            responses = self._session_load_recent_response(payload)
             self._log_responses(responses)
             return responses
         if message_type == "session.refreshConfigOptions":
@@ -346,6 +353,41 @@ class BridgeRuntime:
         for update in updates:
             update.setdefault("chatId", chat_id)
         return updates + [{"type": "bridge.done", "chatId": chat_id}]
+
+    def _session_load_recent_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
+        agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
+        workspace_path = _string_or_default(payload.get("workspacePath"), "")
+        session_id = _string_or_default(payload.get("sessionId"), "")
+        limit = max(1, min(_int_or_default(payload.get("limit"), 50), 200))
+        try:
+            result = self.agent_manager.load_recent_session(chat_id, agent_id, workspace_path, session_id, limit)
+            updates = result.get("updates", [])
+            messages = _latest_visible_messages(updates if isinstance(updates, list) else [], limit)
+            return [
+                {
+                    "type": "session.loadRecent.result",
+                    "chatId": chat_id,
+                    "sessionId": session_id,
+                    "messages": messages,
+                    "scannedEvents": _int_or_default(result.get("scannedEvents"), 0),
+                    "truncated": bool(result.get("truncated", False)),
+                },
+                {"type": "bridge.done", "chatId": chat_id},
+            ]
+        except AcpAgentError as exc:
+            return [
+                {
+                    "type": "session.loadRecent.result",
+                    "chatId": chat_id,
+                    "sessionId": session_id,
+                    "messages": [],
+                    "scannedEvents": 0,
+                    "truncated": False,
+                    "error": str(exc),
+                },
+                {"type": "bridge.done", "chatId": chat_id},
+            ]
 
     def _request_permission(self, chat_id: str, message: dict[str, Any], emit: Callable[[dict[str, Any]], None] | None) -> str:
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
@@ -611,6 +653,47 @@ def _is_agent_message_chunk(response: dict[str, Any]) -> bool:
 
 def _agent_message_text(response: dict[str, Any]) -> str:
     update = response.get("update") if isinstance(response.get("update"), dict) else {}
+    text = _string_or_default(update.get("text"), "")
+    if not text and isinstance(update.get("content"), dict):
+        text = _string_or_default(update["content"].get("text"), "")
+    return text
+
+
+def _latest_visible_messages(updates: list[Any], limit: int) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    for event in updates:
+        if not isinstance(event, dict):
+            continue
+        update = event.get("update") if isinstance(event.get("update"), dict) else {}
+        role = _visible_message_role(update)
+        if role is None:
+            continue
+        text = _visible_message_text(update)
+        if not text.strip():
+            continue
+        message_id = _string_or_default(update.get("messageId"), "")
+        if messages and messages[-1].get("role") == role and (message_id == "" or messages[-1].get("messageId") == message_id):
+            messages[-1]["text"] = str(messages[-1].get("text", "")) + text
+            if message_id:
+                messages[-1]["messageId"] = message_id
+        else:
+            message: dict[str, Any] = {"role": role, "text": text}
+            if message_id:
+                message["messageId"] = message_id
+            messages.append(message)
+    return messages[-limit:]
+
+
+def _visible_message_role(update: dict[str, Any]) -> str | None:
+    session_update = update.get("sessionUpdate")
+    if session_update == "user_message_chunk":
+        return "user"
+    if session_update == "agent_message_chunk":
+        return "agent"
+    return None
+
+
+def _visible_message_text(update: dict[str, Any]) -> str:
     text = _string_or_default(update.get("text"), "")
     if not text and isinstance(update.get("content"), dict):
         text = _string_or_default(update["content"].get("text"), "")

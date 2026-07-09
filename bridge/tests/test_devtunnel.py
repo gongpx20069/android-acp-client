@@ -173,8 +173,10 @@ agentlink-cpc-peixi-3hwbj.jpe1      0                                           
                 return subprocess.CompletedProcess(args, 1, "", "")
             return subprocess.CompletedProcess(args, 3, "", "Unauthorized tunnel creation access: Anonymous does not have 'create' access scope.")
 
-        with self.assertRaises(DevTunnelAuthError):
+        with self.assertRaises(DevTunnelAuthError) as error:
             create_or_reuse_tunnel("devtunnel", "agentlink", runner)
+        self.assertIn(".\\bridge\\.tools\\devtunnel.exe user login -d", str(error.exception))
+        self.assertNotIn("\\.\\bridge", str(error.exception))
 
     def test_create_or_reuse_tunnel_reports_id_conflict(self) -> None:
         def runner(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:

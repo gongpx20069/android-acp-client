@@ -122,7 +122,7 @@ The bridge is responsible for event ordering and replay. Android is responsible 
 
 The bridge does not bind a workspace at startup. In New Session mode, workspace is selected per chat in the New Chat form by entering the remote absolute project path. Leaving the field blank uses `~`, which the bridge resolves to the remote machine user's home directory. The selected path maps to ACP `cwd` when the bridge creates the Copilot ACP session.
 
-In Existing Session mode, the user does not enter a workspace. AgentLink asks the selected machine and agent for all resumable sessions with ACP `session/list {}`. The selected session's own `cwd` becomes the local chat workspace display and is used when loading that session.
+In Existing Session mode, the user does not enter a workspace. AgentLink asks the selected machine and agent for all resumable sessions with ACP `session/list {}`. The selected session's own `cwd` becomes the local chat workspace display. Opening the session uses bridge `session.loadRecent`, which loads ACP history in the bridge, keeps only the newest visible user/agent message bubbles, and replaces the loading placeholder with that recent snapshot.
 
 The workspace does not have to be a Git repository, but Copilot's coding workflows work best inside a repository. If a parent folder such as `D:\peixianws` is selected instead of `D:\peixianws\android-agent-link`, Git-aware commands may report that the current directory is not a Git repository.
 
@@ -132,7 +132,7 @@ ACP slash commands are not the same as Copilot CLI's interactive slash commands.
 
 AgentLink displays advertised commands as chips without the slash prefix. Tapping a command chip sends `/<command>` as a prompt.
 
-`resume` is a built-in AgentLink chip rather than a prompt command. It opens a session picker backed by ACP `session/list`; choosing a session calls `session/load` for the current chat and workspace. AgentLink filters loaded replay down to real chat message bubbles first, then appends the latest N of those messages. N is configured in Settings and defaults to 5. Tool/activity cards and hidden command/config control updates do not count toward N. Typing `/resume` in the prompt is still treated as plain prompt text unless the ACP agent explicitly advertises a `resume` slash command.
+`resume` is a built-in AgentLink chip rather than a prompt command. It opens a session picker backed by ACP `session/list`; choosing a session calls bridge `session.loadRecent` for the current chat and workspace. The bridge scans ACP replay internally and returns only the latest N visible user/agent message bubbles. N is configured in Settings and defaults to 5. Tool/activity cards and hidden command/config control updates do not count toward N. Typing `/resume` in the prompt is still treated as plain prompt text unless the ACP agent explicitly advertises a `resume` slash command.
 
 `model` is also a built-in AgentLink chip. It opens a model picker backed by the latest ACP `config_option_update` option with `id == "model"`, `category == "model"`, or a model-like name. Opening the picker asks the bridge to refresh config options for the current chat, creating an ACP session first if needed. Selecting a model sends ACP `session/set_config_option` through the bridge and updates the picker with the returned `configOptions`. If options have not arrived yet, the picker explains that config options are still loading instead of sending `/model` as a prompt.
 

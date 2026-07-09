@@ -4,22 +4,32 @@
 
 AgentLink lets you control remote coding agents from an Android phone. Your developer machine runs a small bridge and the agent CLI; your phone becomes the control surface for chats, approvals, session resume, model selection, and agent updates.
 
-## What you need
-
-- An Android phone.
-- A developer machine with this repository checked out.
-- A coding agent installed on the developer machine. GitHub Copilot CLI with ACP support is currently the primary path.
-- One private connection method:
-  - **Microsoft Dev Tunnels**: easiest when VPN/mesh networking is blocked.
-  - **Tailscale**: best direct private-network experience when available.
-
 AgentLink does not require opening inbound firewall ports on your developer machine.
 
 ## Install the Android app
 
-Download the latest APK from this repository's **Releases** page and install it on Android.
+Download and install the latest APK from the latest release:
+
+**[Download AgentLink APK from Releases](https://github.com/gongpx20069/android-agent-link/releases/latest)**
+
+On the release page, download the APK asset named like `agentlink-0.0.x.apk`.
 
 If you previously installed a debug build, Android may require uninstalling it once before installing the signed release APK. After that, signed releases can update in place.
+
+## Supported coding agents
+
+AgentLink talks to agents through ACP (Agent Client Protocol). The bridge currently exposes agents that are explicitly wired in `bridge/src/android_acp_bridge/agents.py` and `acp_agent.py`.
+
+| Agent | Current status | Required command on the developer machine | Notes |
+| --- | --- | --- | --- |
+| **GitHub Copilot CLI** | Supported now | `copilot --acp` | Primary tested path. The bridge launches `copilot --acp --allow-all --add-dir <workspace>`. |
+| **Claude Code** | Supported now when installed | `claude --acp` | Exposed in the app when `claude` is on PATH. Requires a Claude Code CLI version that supports ACP. |
+| **Gemini CLI** | Not wired yet | `gemini --acp` | Gemini CLI has ACP mode, but AgentLink does not yet expose `gemini-cli` in the bridge agent list. |
+| **OpenAI Codex CLI** | Not wired yet | varies | No stable AgentLink integration yet. Needs an ACP-compatible CLI command before it can be added. |
+| **Cursor Agent / Cursor CLI** | Not wired yet | varies | Not currently exposed by the bridge. |
+| **Aider** | Not wired yet | `aider` | Aider is a popular coding assistant, but AgentLink does not currently have an ACP adapter for it. |
+
+In the app, missing agents may still appear as unavailable/missing depending on bridge discovery. Only the “Supported now” agents can be selected for working chats today.
 
 ## Start the bridge
 
@@ -79,7 +89,7 @@ The QR contains a short-lived pairing token. If it expires, restart or re-run th
 1. Go to **Chats**.
 2. Tap **New Chat**.
 3. Select the paired machine.
-4. Select an agent, such as Copilot CLI.
+4. Select an agent, such as GitHub Copilot CLI.
 5. Enter the remote workspace path, for example:
 
 ```text
@@ -129,12 +139,13 @@ Then retry:
 python .\bridge\run.py start --transport devtunnel
 ```
 
-### Copilot agent is not available
+### Copilot or Claude agent is not available
 
-Install and sign in to GitHub Copilot CLI on the developer machine, then confirm this works:
+Install and sign in to the CLI on the developer machine, then confirm one of these commands works:
 
 ```powershell
 copilot --acp
+claude --acp
 ```
 
 ## For contributors
@@ -147,4 +158,3 @@ This README is for users. Development and agent instructions live in:
 - `docs/acp-bridge-contract.md`
 - `docs/android-app.md`
 - `docs/security-model.md`
-

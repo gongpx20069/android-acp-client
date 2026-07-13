@@ -4,12 +4,19 @@ import base64
 import json
 import unittest
 from datetime import timedelta
+from unittest.mock import patch
 
-from android_acp_bridge.main import _parse_connection_headers, _validate_pairing_endpoint
+from android_acp_bridge.main import _parse_connection_headers, _validate_pairing_endpoint, main
 from android_acp_bridge.pairing import PairingStore, build_pairing_payload, encode_pairing_deep_link, render_terminal_qr
 
 
 class PairingTests(unittest.TestCase):
+    def test_start_defaults_to_devtunnel_transport(self) -> None:
+        with patch("android_acp_bridge.main._start", return_value=0) as start:
+            self.assertEqual(main(["start"]), 0)
+
+        self.assertEqual(start.call_args.args[0].transport, "devtunnel")
+
     def test_pairing_token_is_one_time_use(self) -> None:
         store = PairingStore()
         token = store.create()

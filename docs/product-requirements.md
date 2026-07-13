@@ -72,8 +72,10 @@ Permission modes for MVP:
 - Add a machine by pasting the bridge-generated pairing deep link when in-app scanning is unavailable.
 - Show online/offline state.
 - Show bridge version and supported agents when available.
+- Default to an authenticated relay that does not require an Android companion networking app.
 - Support Tailscale or private-network addresses without requiring public exposure.
-- Show clear troubleshooting when Tailscale or the bridge endpoint is unreachable.
+- Explain that Tailscale and ZeroTier transports require their client on both Android and the developer machine.
+- Show clear troubleshooting when the selected transport or bridge endpoint is unreachable.
 
 ### Workspaces
 

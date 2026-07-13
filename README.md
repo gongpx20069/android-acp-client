@@ -75,12 +75,12 @@ See [`bridge/README.md`](bridge/README.md) for dependency groups and development
 
 Run bridge commands from the repository root on your developer machine.
 
-### Option A: Microsoft Dev Tunnels
+### Option A: Microsoft Dev Tunnels (default)
 
-Use this when you cannot install or use Tailscale/ZeroTier, but you can sign in to Microsoft Dev Tunnels.
+This authenticated relay is the default because Android does not need a Tailscale, ZeroTier, or other companion networking app. You only need to sign in to Microsoft Dev Tunnels on the developer machine.
 
 ```powershell
-android-acp-bridge start --transport devtunnel
+android-acp-bridge start
 ```
 
 The bridge will:
@@ -95,13 +95,15 @@ Do **not** enable anonymous/public Dev Tunnel access. AgentLink uses a short-liv
 
 ### Option B: Tailscale
 
-Use this when your phone and developer machine can join the same Tailscale tailnet.
+Tailscale is an optional private-network transport. Install the Tailscale app on both the Android device and developer machine, sign both into the same tailnet, and keep both connected.
 
 ```powershell
-android-acp-bridge start
+android-acp-bridge start --transport tailscale
 ```
 
 The bridge checks Tailscale, runs `tailscale up --qr` if login is needed, waits for a Tailscale IP, then prints a pairing link and QR code.
+
+ZeroTier has the same device requirement: both the developer machine and Android need the ZeroTier client and must join the same network. AgentLink does not currently automate ZeroTier setup.
 
 If Windows blocks Tailscale install with organization policy / exit code `1625`, install Tailscale through your company software portal, ask an administrator to approve `Tailscale.Tailscale`, or use the official installer from <https://tailscale.com/download/windows>.
 

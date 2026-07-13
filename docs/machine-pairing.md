@@ -4,7 +4,7 @@ This document defines how a developer machine becomes available to AgentLink.
 
 ## Goal
 
-Starting the bridge on a developer machine should lead the user to a scannable QR code. The Android app scans the QR code, connects to the bridge, completes pairing, and saves the machine.
+Starting the bridge on a developer machine should lead the user to a scannable QR code. The Android app scans the QR code, connects to the bridge, completes pairing, and saves the machine. The default authenticated Dev Tunnel transport does not require a companion networking app on Android.
 
 The QR code does not create network connectivity by itself. It transfers endpoint metadata and a short-lived pairing credential. Connectivity still depends on Tailscale, another private network, LAN, or an explicitly configured tunnel.
 
@@ -12,10 +12,9 @@ The QR code does not create network connectivity by itself. It transfers endpoin
 
 ```text
 Start bridge on developer machine
-  detect Tailscale
-  if unavailable, attempt automatic install and show platform guidance if install cannot run
-  if installed but not running/logged in, run `tailscale up --qr`
-  when reachable, start bridge listener
+  select transport (default: authenticated Dev Tunnel)
+  authenticate and start the selected transport
+  start bridge listener
   create one-time pairing token
   show Android pairing QR code
 Android scans QR
@@ -28,7 +27,9 @@ Android scans QR
 
 ```text
 starting
-  -> tailscale_cli_missing
+  -> devtunnel_authenticating (default)
+  -> devtunnel_hosting
+  -> tailscale_cli_missing (optional Tailscale transport)
   -> tailscale_needs_login
   -> tailscale_stopped
   -> tailscale_running
@@ -54,7 +55,7 @@ Tailscale is installed but not authenticated.
 
 Bridge behavior:
 
-- Run `tailscale up --qr` by default.
+- Run `tailscale up --qr` automatically when the user selects Tailscale transport.
 - If supported, use `tailscale up --qr` to show a Tailscale login QR code for the developer machine.
 - Poll `tailscale status --json` until the backend state becomes running or the user cancels.
 
@@ -66,7 +67,7 @@ Tailscale is installed and authenticated but disconnected.
 
 Bridge behavior:
 
-- Run `tailscale up --qr` by default.
+- Run `tailscale up --qr` automatically when the user selects Tailscale transport.
 - Wait for a running state before generating a Tailscale endpoint.
 
 ### `tailscale_running`
@@ -113,7 +114,7 @@ Expected checks:
 
 `tailscale up` connects the device and authenticates if needed. The Tailscale CLI supports JSON output for `up`, and `tailscale up --qr` can generate a QR code for the Tailscale web login URL.
 
-The bridge startup command requires Tailscale by default. `--allow-non-tailscale` is reserved for localhost/manual testing and should not be used for normal Android pairing.
+Use `android-acp-bridge start --transport tailscale` to select this transport. Tailscale must be installed and connected on both the developer machine and Android device, using the same tailnet. ZeroTier follows the same two-client model but is not currently automated by AgentLink.
 
 The bridge does not select a workspace during pairing. Workspace selection happens later in Android when creating a chat.
 
@@ -215,7 +216,7 @@ If the endpoint is unreachable, the app should explain likely causes:
 
 Supported:
 
-- Microsoft Dev Tunnels private relay with `android-acp-bridge start --transport devtunnel`. The bridge downloads or finds the `devtunnel` CLI, triggers device-code login when needed, creates/reuses a tunnel, creates the port, issues a short-lived connect token, starts `devtunnel host`, and includes the `wss://*.devtunnels.ms` endpoint plus `X-Tunnel-Authorization` header in the Android pairing QR.
+- Microsoft Dev Tunnels private relay with `android-acp-bridge start` (or explicit `--transport devtunnel`). The bridge downloads or finds the `devtunnel` CLI, triggers device-code login when needed, creates/reuses a tunnel, creates the port, issues a short-lived connect token, starts `devtunnel host`, and includes the `wss://*.devtunnels.ms` endpoint plus `X-Tunnel-Authorization` header in the Android pairing QR. Android does not need a Dev Tunnel companion app.
 
 Supported later:
 

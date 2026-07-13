@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     start_parser = subparsers.add_parser("start", help="Start the bridge server and print a pairing QR code")
-    start_parser.add_argument("--transport", choices=("tailscale", "devtunnel", "local"), default="tailscale", help="How Android reaches the bridge. Defaults to tailscale.")
+    start_parser.add_argument("--transport", choices=("tailscale", "devtunnel", "local"), default="devtunnel", help="How Android reaches the bridge. Defaults to devtunnel.")
     start_parser.add_argument("--host", default=None, help="Host to bind. Defaults to the Tailscale IP in Tailscale mode.")
     start_parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to bind.")
     start_parser.add_argument("--pairing-endpoint", help="Endpoint to put in the Android pairing QR/link when a relay forwards to this bridge, e.g. wss://<id>-4317.devtunnels.ms.")
@@ -98,7 +98,7 @@ def _start(args: argparse.Namespace) -> int:
                 print(f"Tailscale is not ready: {status.state}", file=sys.stderr)
                 if status.message:
                     print(status.message, file=sys.stderr)
-                print("Default bridge startup requires Tailscale. Use --transport devtunnel for a private relay or --transport local for localhost/manual testing.", file=sys.stderr)
+                print("Tailscale transport requires a working Tailscale connection. Use the default Dev Tunnel transport or --transport local for localhost/manual testing.", file=sys.stderr)
                 return 1
             bind_host = args.host or "127.0.0.1"
             endpoint = f"ws://{bind_host}:{args.port}"

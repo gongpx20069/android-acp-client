@@ -121,7 +121,7 @@ def get_status(
     if cli_path is None:
         return TailscaleStatus(
             state=TailscaleState.CLI_MISSING,
-            message="Tailscale CLI was not found. The bridge requires Tailscale by default.",
+            message="Tailscale CLI was not found. Install Tailscale before using the Tailscale transport.",
         )
 
     try:
@@ -241,11 +241,11 @@ def build_install_command(system: str, command_exists: CommandExists = shutil.wh
 def install_guidance(system: str) -> str:
     normalized = system.lower()
     if normalized == "windows":
-        return "Install Tailscale with `winget install --id Tailscale.Tailscale --exact`, then re-run `android-acp-bridge start`."
+        return "Install Tailscale with `winget install --id Tailscale.Tailscale --exact`, then re-run `android-acp-bridge start --transport tailscale`."
     if normalized == "darwin":
-        return "Install Tailscale with `brew install --cask tailscale`, then re-run `android-acp-bridge start`."
+        return "Install Tailscale with `brew install --cask tailscale`, then re-run `android-acp-bridge start --transport tailscale`."
     if normalized == "linux":
-        return "Install Tailscale with `curl -fsSL https://tailscale.com/install.sh | sh`, then re-run `android-acp-bridge start`."
+        return "Install Tailscale with `curl -fsSL https://tailscale.com/install.sh | sh`, then re-run `android-acp-bridge start --transport tailscale`."
     return "Install Tailscale from https://tailscale.com/download, then re-run the bridge."
 
 
@@ -256,7 +256,8 @@ def install_failure_guidance(system: str, returncode: int, detail: str) -> str:
         return (
             "Windows organization policy blocked the winget installer. The bridge will not bypass device policy. "
             "Install Tailscale from your company software portal, ask an administrator to approve Tailscale.Tailscale, "
-            "or use the official installer from https://tailscale.com/download/windows, then re-run `android-acp-bridge start`."
+            "or use the official installer from https://tailscale.com/download/windows, then re-run "
+            "`android-acp-bridge start --transport tailscale`."
         )
     return install_guidance(system)
 

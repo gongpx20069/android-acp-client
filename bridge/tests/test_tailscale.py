@@ -100,7 +100,7 @@ class TailscaleTests(unittest.TestCase):
         status = get_status(command_exists=lambda _command: None)
 
         self.assertEqual(status.state, TailscaleState.CLI_MISSING)
-        self.assertIn("requires Tailscale", status.message or "")
+        self.assertIn("before using the Tailscale transport", status.message or "")
 
     def test_build_install_command_uses_winget_on_windows(self) -> None:
         command = build_install_command("Windows", lambda name: f"C:\\tools\\{name}.exe" if name == "winget" else None)

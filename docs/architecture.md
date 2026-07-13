@@ -19,7 +19,7 @@ Many coding agents communicate over stdio and assume a desktop/server environmen
 
 - Remote transport for Android.
 - Agent process lifecycle management.
-- Tailscale/private-network detection and machine pairing.
+- Authenticated relay or private-network transport and machine pairing.
 - Workspace discovery.
 - Permission and approval mediation.
 - Session persistence and reconnection.
@@ -33,6 +33,7 @@ Initial choices:
 
 - Python 3.11+
 - Python standard library HTTP/WebSocket server as the default runtime path
+- Authenticated Microsoft Dev Tunnels as the default remote transport
 - Tailscale CLI integration through subprocess calls
 - Optional FastAPI/Pydantic/uvicorn backend for future richer transport work
 - Required `qrcode` dependency for compact CLI QR rendering
@@ -239,7 +240,7 @@ App/bridge management is outside core ACP:
 
 - machine registration
 - QR-based machine pairing
-- Tailscale/private-network endpoint discovery
+- authenticated relay and private-network endpoint discovery
 - workspace discovery
 - agent discovery
 - bridge health

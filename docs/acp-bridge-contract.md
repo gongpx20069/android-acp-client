@@ -31,16 +31,20 @@ Public internet exposure is not the default.
 
 ## Startup and Pairing
 
-On startup, the bridge should check whether a Tailscale endpoint is available before showing Android pairing information. Tailscale is the required default MVP transport; non-Tailscale mode is an explicit localhost/manual testing opt-in.
+The default startup transport is an authenticated Microsoft Dev Tunnel so Android does not need a companion private-network app. Anonymous Dev Tunnel access is prohibited. Tailscale remains an explicit private-network option and requires Tailscale on both Android and the developer machine.
 
 Startup flow:
 
 ```text
-detect Tailscale
-  if missing: attempt automatic install, then show platform guidance if install cannot run
-  if not logged in/running: run `tailscale up --qr`
-  wait until a Tailscale IP is available
-start bridge listener on the Tailscale IP
+select transport (default: devtunnel)
+  devtunnel:
+    authenticate developer-machine CLI
+    create/reuse private tunnel and short-lived connect token
+    start bridge listener on localhost
+  tailscale:
+    detect/install Tailscale on the developer machine
+    run `tailscale up --qr` if login is required
+    wait for a Tailscale IP and bind the listener to it
 generate one-time pairing token
 show Android pairing QR code
 ```

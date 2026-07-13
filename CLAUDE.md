@@ -91,6 +91,8 @@ The app and bridge should make agent behavior auditable:
 - Validate all remote paths and command metadata received from a bridge.
 - Prefer explicit state machines for connection, session, prompt, and approval flows.
 - Use behavior-safe defaults: disconnected, read-only, and approval-required states should be safe.
+- Use authenticated Microsoft Dev Tunnels as the default remote transport; never enable anonymous tunnel access.
+- Treat Tailscale and ZeroTier as optional overlay transports that require their client on both Android and the developer machine.
 - Document new protocol fields before implementing them.
 
 ## Documentation Update Rules

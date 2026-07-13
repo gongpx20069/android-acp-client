@@ -41,30 +41,38 @@ Use `requirements-all.txt` instead of `requirements.txt` to install every option
 
 ## Starting the bridge
 
-### Tailscale mode (default)
+### Microsoft Dev Tunnels (default)
 
 ```powershell
 android-acp-bridge start
 ```
 
+The default transport creates a private authenticated Microsoft Dev Tunnel. Android connects directly with the short-lived relay authorization header in the pairing QR and does not need a Tailscale or ZeroTier app. See **Microsoft Dev Tunnels private relay** below for login behavior and options.
+
+### Tailscale mode (optional)
+
+```powershell
+android-acp-bridge start --transport tailscale
+```
+
 Tailscale mode starts the local HTTP/WebSocket server on the machine's Tailscale IP, creates a short-lived pairing token, and prints both an AgentLink pairing link and a compact CLI QR code.
 
-Default Tailscale setup flow:
+Tailscale setup flow:
 
 1. Check whether the `tailscale` CLI is installed.
 2. If missing, try to install it automatically with `winget` on Windows, Homebrew on macOS, or the official Tailscale install script on Linux.
 3. If installed but logged out or stopped, run `tailscale up --qr` so you can complete Tailscale login.
 4. Re-check status and only generate the Android pairing QR after a Tailscale IP is available.
 
-The Android device must also be signed in to the same Tailscale tailnet. Use `--allow-non-tailscale` only for localhost/manual testing.
+The Android device must also have Tailscale installed, be signed in to the same tailnet, and remain connected. ZeroTier similarly requires its client on both devices and is not currently automated by AgentLink.
 
-If Windows reports `组织策略正在阻止安装` / installer exit code `1625`, your organization blocks `winget` installs. The bridge will not bypass that policy; install Tailscale from your company software portal, ask an administrator to approve `Tailscale.Tailscale`, or use the official installer from <https://tailscale.com/download/windows>, then re-run `android-acp-bridge start`.
+If Windows reports `组织策略正在阻止安装` / installer exit code `1625`, your organization blocks `winget` installs. The bridge will not bypass that policy; install Tailscale from your company software portal, ask an administrator to approve `Tailscale.Tailscale`, or use the official installer from <https://tailscale.com/download/windows>, then re-run `android-acp-bridge start --transport tailscale`.
 
 ### Choosing workspaces
 
 The bridge does not bind a workspace at startup. A workspace is chosen when creating a new chat in Android. Enter the remote absolute project path in the New Chat form; that value becomes the chat workspace and will map to ACP `cwd` when agent-session execution is connected.
 
-### Microsoft Dev Tunnels private relay
+### Microsoft Dev Tunnels private relay details
 
 Use this when Tailscale/ZeroTier are blocked but a private authenticated Microsoft relay is acceptable. Do not enable anonymous Dev Tunnel access.
 
@@ -159,7 +167,7 @@ android-acp-bridge tailscale-status
 android-acp-bridge pairing
 ```
 
-`start` runs automatic Tailscale setup by default. Use `--no-tailscale-setup` to only inspect current Tailscale status without installing or logging in.
+`start` uses an authenticated Microsoft Dev Tunnel by default. Use `start --transport tailscale` for Tailscale; add `--no-tailscale-setup` to inspect its current state without installing or logging in.
 
 The standalone `pairing` command prints a sample pairing payload for an endpoint:
 

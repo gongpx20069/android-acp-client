@@ -75,12 +75,12 @@ python -m pip install -r requirements.txt
 
 请在开发机的仓库根目录运行 bridge 命令。
 
-### 方式 A：Microsoft Dev Tunnels
+### 方式 A：Microsoft Dev Tunnels（默认）
 
-如果不能使用 Tailscale / ZeroTier，但可以登录 Microsoft Dev Tunnels，推荐用这个方式：
+这是默认的认证 relay 方式，因为 Android 不需要安装 Tailscale、ZeroTier 或其他配套网络 App；只需在开发机登录 Microsoft Dev Tunnels。
 
 ```powershell
-android-acp-bridge start --transport devtunnel
+android-acp-bridge start
 ```
 
 bridge 会自动：
@@ -95,13 +95,15 @@ bridge 会自动：
 
 ### 方式 B：Tailscale
 
-如果手机和开发机都可以加入同一个 Tailscale tailnet，使用：
+Tailscale 是可选的私有组网方式。Android 和开发机都必须安装 Tailscale、登录同一个 tailnet，并保持连接。
 
 ```powershell
-android-acp-bridge start
+android-acp-bridge start --transport tailscale
 ```
 
 bridge 会检查 Tailscale，必要时运行 `tailscale up --qr`，等待 Tailscale IP 可用，然后输出 pairing link 和 QR code。
+
+ZeroTier 的要求相同：开发机和 Android 都需要安装 ZeroTier 客户端并加入同一个网络。AgentLink 当前不会自动配置 ZeroTier。
 
 如果 Windows 因组织策略或 exit code `1625` 阻止安装 Tailscale，请通过公司软件门户安装，或让管理员批准 `Tailscale.Tailscale`，也可以使用官方安装包：<https://tailscale.com/download/windows>。
 

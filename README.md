@@ -36,6 +36,41 @@ AgentLink talks to agents through ACP (Agent Client Protocol). The bridge curren
 
 In the app, missing agents may still appear as unavailable/missing depending on bridge discovery. Only the “Supported now” agents can be selected for working chats today.
 
+## Install the bridge
+
+The bridge requires Python 3.11 or newer and never installs its own Python environment or packages at startup. Choose one installation method below and run it from the `bridge` directory.
+
+### Conda
+
+```powershell
+cd bridge
+conda env create -f environment.yml
+conda activate android-acp-bridge
+```
+
+### uv
+
+```powershell
+cd bridge
+uv venv --python 3.12
+.\.venv\Scripts\Activate.ps1
+uv pip install -r requirements.txt
+```
+
+### Python venv and pip
+
+```powershell
+cd bridge
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Use `requirements-all.txt` instead of `requirements.txt` to install every optional backend. After installation, use the `android-acp-bridge` command shown below. The source helper `python .\run.py ...` forwards to the same CLI using the current Python environment; it does not create an environment or install packages.
+
+See [`bridge/README.md`](bridge/README.md) for dependency groups and development details.
+
 ## Start the bridge
 
 Run bridge commands from the repository root on your developer machine.
@@ -45,7 +80,7 @@ Run bridge commands from the repository root on your developer machine.
 Use this when you cannot install or use Tailscale/ZeroTier, but you can sign in to Microsoft Dev Tunnels.
 
 ```powershell
-python .\bridge\run.py start --transport devtunnel
+android-acp-bridge start --transport devtunnel
 ```
 
 The bridge will:
@@ -63,7 +98,7 @@ Do **not** enable anonymous/public Dev Tunnel access. AgentLink uses a short-liv
 Use this when your phone and developer machine can join the same Tailscale tailnet.
 
 ```powershell
-python .\bridge\run.py start
+android-acp-bridge start
 ```
 
 The bridge checks Tailscale, runs `tailscale up --qr` if login is needed, waits for a Tailscale IP, then prints a pairing link and QR code.
@@ -73,7 +108,7 @@ If Windows blocks Tailscale install with organization policy / exit code `1625`,
 ### Local testing only
 
 ```powershell
-python .\bridge\run.py start --transport local
+android-acp-bridge start --transport local
 ```
 
 This is only useful for local/manual tests. It does not make your developer machine reachable from your phone by itself.
@@ -141,7 +176,7 @@ devtunnel user login -d
 Then retry:
 
 ```powershell
-python .\bridge\run.py start --transport devtunnel
+android-acp-bridge start --transport devtunnel
 ```
 
 ### Copilot or Claude agent is not available

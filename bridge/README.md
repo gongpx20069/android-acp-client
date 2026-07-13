@@ -2,39 +2,49 @@
 
 Python MVP bridge for pairing AgentLink with a remote developer machine.
 
-## Development setup
+## Install
 
-Recommended conda setup:
+The bridge requires Python 3.11 or newer. It never creates a Python environment or installs packages during startup. Run one of these explicit installation flows from the `bridge` directory.
+
+### Conda
 
 ```powershell
-cd bridge
 conda env create -f environment.yml
 conda activate android-acp-bridge
-android-acp-bridge start
 ```
 
 If the environment already exists:
 
 ```powershell
-cd bridge
 conda env update -n android-acp-bridge -f environment.yml --prune
 conda activate android-acp-bridge
 ```
 
-Source checkout helper:
+### uv
 
 ```powershell
-python .\run.py start
+uv venv --python 3.12
+.\.venv\Scripts\Activate.ps1
+uv pip install -r requirements.txt
 ```
 
-The default server backend uses only the Python standard library. `run.py` creates `bridge\.venv` on first use, installs `requirements.txt`, and forwards every argument to the bridge CLI.
+### Python venv and pip
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Use `requirements-all.txt` instead of `requirements.txt` to install every optional backend. After installation, use `android-acp-bridge ...` directly. The source helper `python .\run.py ...` uses the current Python environment and forwards arguments to the same CLI; it never creates an environment or installs packages.
 
 ## Starting the bridge
 
 ### Tailscale mode (default)
 
 ```powershell
-python .\run.py start
+android-acp-bridge start
 ```
 
 Tailscale mode starts the local HTTP/WebSocket server on the machine's Tailscale IP, creates a short-lived pairing token, and prints both an AgentLink pairing link and a compact CLI QR code.
@@ -48,7 +58,7 @@ Default Tailscale setup flow:
 
 The Android device must also be signed in to the same Tailscale tailnet. Use `--allow-non-tailscale` only for localhost/manual testing.
 
-If Windows reports `组织策略正在阻止安装` / installer exit code `1625`, your organization blocks `winget` installs. The bridge will not bypass that policy; install Tailscale from your company software portal, ask an administrator to approve `Tailscale.Tailscale`, or use the official installer from <https://tailscale.com/download/windows>, then re-run `python .\run.py start`.
+If Windows reports `组织策略正在阻止安装` / installer exit code `1625`, your organization blocks `winget` installs. The bridge will not bypass that policy; install Tailscale from your company software portal, ask an administrator to approve `Tailscale.Tailscale`, or use the official installer from <https://tailscale.com/download/windows>, then re-run `android-acp-bridge start`.
 
 ### Choosing workspaces
 
@@ -64,12 +74,6 @@ With conda:
 conda activate android-acp-bridge
 devtunnel user login -d
 android-acp-bridge start --transport devtunnel
-```
-
-Source checkout helper:
-
-```powershell
-python .\run.py start --transport devtunnel
 ```
 
 What it does:
@@ -100,14 +104,14 @@ Then retry the bridge command. The bridge reports this as a setup error instead 
 Optional overrides:
 
 ```powershell
-python .\run.py start --transport devtunnel --devtunnel-id my-agentlink
-python .\run.py start --transport devtunnel --devtunnel-cli C:\tools\devtunnel.exe
+android-acp-bridge start --transport devtunnel --devtunnel-id my-agentlink
+android-acp-bridge start --transport devtunnel --devtunnel-cli C:\tools\devtunnel.exe
 ```
 
 If tunnel creation fails with `Conflict with existing entity`, the tunnel ID is already taken but not visible to your account. Retry with a unique ID:
 
 ```powershell
-python .\run.py start --transport devtunnel --devtunnel-id agentlink-<yourname>-<devbox>
+android-acp-bridge start --transport devtunnel --devtunnel-id agentlink-<yourname>-<devbox>
 ```
 
 Android stores the relay header per machine and sends it on `/pairing/redeem`, `/health`, `/agents`, `/workspaces`, and future WebSocket requests for that machine. Dev Tunnel connect tokens currently expire after a short period, so re-run the command and re-scan when access expires.
@@ -117,7 +121,7 @@ Manual debugging flow:
 If you need to run `devtunnel host` yourself, start the AgentLink bridge separately with the relay endpoint and connect token:
 
 ```powershell
-python .\run.py start `
+android-acp-bridge start `
   --allow-non-tailscale `
   --host 127.0.0.1 `
   --port 4317 `
@@ -130,18 +134,10 @@ Why `--pairing-endpoint` matters: the pairing token is created by the running br
 ### Localhost/manual testing
 
 ```powershell
-python .\run.py start --allow-non-tailscale
+android-acp-bridge start --transport local
 ```
 
 This prints a QR/link for `ws://127.0.0.1:4317`. It is useful for local testing but will not make a developer machine reachable from Android unless another transport forwards the port.
-
-Package installation is still supported when you want the command on your PATH:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
-.\.venv\Scripts\android-acp-bridge start
-```
 
 ## Requirements
 
@@ -155,27 +151,12 @@ Run these commands from the `bridge` directory.
 | `requirements-fastapi.txt` | Base runtime plus the optional FastAPI server backend. |
 | `requirements-all.txt` | Base runtime plus all optional extras. |
 
-Install with uv:
-
-```powershell
-uv venv
-uv pip install -r requirements.txt
-```
-
-Install with conda:
-
-```powershell
-conda env create -f environment.yml
-conda activate android-acp-bridge
-android-acp-bridge start
-```
-
 ## Commands
 
 ```powershell
-python .\run.py start
-python .\run.py tailscale-status
-python .\run.py pairing
+android-acp-bridge start
+android-acp-bridge tailscale-status
+android-acp-bridge pairing
 ```
 
 `start` runs automatic Tailscale setup by default. Use `--no-tailscale-setup` to only inspect current Tailscale status without installing or logging in.
@@ -183,7 +164,7 @@ python .\run.py pairing
 The standalone `pairing` command prints a sample pairing payload for an endpoint:
 
 ```powershell
-python .\run.py pairing --endpoint wss://example-4317.devtunnels.ms --connection-header "X-Tunnel-Authorization=tunnel <connect-token>"
+android-acp-bridge pairing --endpoint wss://example-4317.devtunnels.ms --connection-header "X-Tunnel-Authorization=tunnel <connect-token>"
 ```
 
 Use `start --pairing-endpoint ...` instead when you need a pairing QR for a running bridge server.

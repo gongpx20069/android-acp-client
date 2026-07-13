@@ -131,7 +131,7 @@ def create_or_reuse_tunnel(cli_path: str, tunnel_id: str, runner: CommandRunner 
                 "Dev Tunnel creation was rejected because the CLI is not authenticated or lacks create access. "
                 "Run `devtunnel user login -d` if devtunnel is on PATH, or "
                 "`.\\bridge\\.tools\\devtunnel.exe user login -d` when using the bridge-downloaded CLI. "
-                "Then retry `python .\\bridge\\run.py start --transport devtunnel`."
+                "Then retry `android-acp-bridge start --transport devtunnel`."
             )
         if "conflict with existing entity" in output or "already exists" in output:
             visible_id = find_visible_tunnel_id(cli_path, tunnel_id, runner)
@@ -140,7 +140,7 @@ def create_or_reuse_tunnel(cli_path: str, tunnel_id: str, runner: CommandRunner 
             raise DevTunnelConflictError(
                 f"Dev Tunnel ID `{tunnel_id}` is already taken but is not visible to this account. "
                 "Retry with a unique ID, for example "
-                "`python .\\bridge\\run.py start --transport devtunnel --devtunnel-id agentlink-myname-devbox`."
+                "`android-acp-bridge start --transport devtunnel --devtunnel-id agentlink-myname-devbox`."
             )
         raise RuntimeError(_command_error("devtunnel create", create))
     created_id = parse_tunnel_id(create.stdout)

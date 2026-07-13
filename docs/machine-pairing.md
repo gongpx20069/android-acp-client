@@ -214,7 +214,7 @@ If the endpoint is unreachable, the app should explain likely causes:
 
 Supported:
 
-- Microsoft Dev Tunnels private relay with `python bridge\run.py start --transport devtunnel`. The bridge downloads or finds the `devtunnel` CLI, triggers device-code login when needed, creates/reuses a tunnel, creates the port, issues a short-lived connect token, starts `devtunnel host`, and includes the `wss://*.devtunnels.ms` endpoint plus `X-Tunnel-Authorization` header in the Android pairing QR.
+- Microsoft Dev Tunnels private relay with `android-acp-bridge start --transport devtunnel`. The bridge downloads or finds the `devtunnel` CLI, triggers device-code login when needed, creates/reuses a tunnel, creates the port, issues a short-lived connect token, starts `devtunnel host`, and includes the `wss://*.devtunnels.ms` endpoint plus `X-Tunnel-Authorization` header in the Android pairing QR.
 
 Supported later:
 

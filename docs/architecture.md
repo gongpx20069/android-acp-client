@@ -37,7 +37,7 @@ Initial choices:
 - Optional FastAPI/Pydantic/uvicorn backend for future richer transport work
 - Required `qrcode` dependency for compact CLI QR rendering
 
-The Python bridge is optimized for MVP speed and cross-platform development. The default source-checkout path is `python bridge\run.py`, which creates a local virtual environment, installs `bridge\requirements.txt`, and runs the package entry point without requiring users to set `PYTHONPATH`. Third-party bridge dependencies must be declared in `pyproject.toml` and exposed through requirements files for pip, uv, and conda installation. A later release may package it as a standalone executable so developer machines do not need to install Python manually.
+The Python bridge is optimized for MVP speed and cross-platform development. Users explicitly install it with Conda, uv, or Python venv/pip before startup; the bridge never creates a Python environment or installs packages at startup. The `python bridge\run.py` source helper uses the active Python environment and forwards to the package CLI without modifying that environment. Third-party bridge dependencies must be declared in `pyproject.toml` and exposed through requirements files for pip, uv, and conda installation. A later release may package it as a standalone executable so developer machines do not need to install Python manually.
 
 ## App Modules
 

@@ -42,6 +42,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -2245,14 +2246,7 @@ private fun MachinesScreen(
 @Composable
 private fun SwipeToDeleteItem(onDelete: () -> Unit, content: @Composable () -> Unit) {
     val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) {
-                onDelete()
-                true
-            } else {
-                false
-            }
-        },
+        confirmValueChange = { value -> value != SwipeToDismissBoxValue.StartToEnd },
     )
 
     SwipeToDismissBox(
@@ -2267,7 +2261,15 @@ private fun SwipeToDeleteItem(onDelete: () -> Unit, content: @Composable () -> U
                     .padding(horizontal = 18.dp),
                 contentAlignment = Alignment.CenterEnd,
             ) {
-                Text(LocalAppStrings.current.delete, color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.SemiBold)
+                Button(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) {
+                    Text(LocalAppStrings.current.delete, fontWeight = FontWeight.SemiBold)
+                }
             }
         },
         content = { content() },

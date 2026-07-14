@@ -5,6 +5,26 @@ import org.junit.Test
 
 class PromptQueueStateTest {
     @Test
+    fun sessionBindingIsPersistedAndNeverDowngradedByReplay() {
+        val bound = testChat().bindAcpSession("session-1", resumable = false)
+        val resumable = bound.bindAcpSession("session-1", resumable = true)
+        val replayed = resumable.bindAcpSession("session-1", resumable = false)
+
+        assertEquals("session-1", replayed.acpSessionId)
+        assertEquals(true, replayed.acpSessionResumable)
+    }
+
+    @Test
+    fun replacementSessionUsesItsOwnResumableState() {
+        val original = testChat().bindAcpSession("session-1", resumable = true)
+
+        val replaced = original.bindAcpSession("session-2", resumable = false)
+
+        assertEquals("session-2", replaced.acpSessionId)
+        assertEquals(false, replaced.acpSessionResumable)
+    }
+
+    @Test
     fun queuedPromptMovesIntoTimelineWhenItStarts() {
         val chat = testChat().copy(
             queuedPrompts = listOf(QueuedPrompt("op_1", "run tests", 10)),

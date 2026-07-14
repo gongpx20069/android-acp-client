@@ -111,6 +111,7 @@ import com.gongpx.androidacpclient.data.model.Machine
 import com.gongpx.androidacpclient.data.model.MessageRole
 import com.gongpx.androidacpclient.data.model.QueuedPrompt
 import com.gongpx.androidacpclient.data.model.acceptPrompt
+import com.gongpx.androidacpclient.data.model.bindAcpSession
 import com.gongpx.androidacpclient.data.model.finishPrompt
 import com.gongpx.androidacpclient.data.model.isFinalPromptCompletion
 import com.gongpx.androidacpclient.data.model.isTerminalPromptStatus
@@ -545,6 +546,11 @@ fun AgentLinkApp(
         chatStore.upsert(chat)
     }
 
+    fun handleSessionBinding(chatId: String, sessionId: String, resumable: Boolean) {
+        val current = chats.firstOrNull { it.id == chatId } ?: return
+        upsertChat(current.bindAcpSession(sessionId, resumable))
+    }
+
     fun setChatUnread(chatId: String, unread: Boolean) {
         if (unread) {
             if (chatId !in unreadChatIds) unreadChatIds.add(chatId)
@@ -630,6 +636,7 @@ fun AgentLinkApp(
             agentName = agent.displayName,
             createdAtMillis = System.currentTimeMillis(),
             acpSessionId = session.sessionId,
+            acpSessionResumable = true,
             messages = listOf(
                 ChatMessage(
                     role = MessageRole.System,
@@ -642,12 +649,22 @@ fun AgentLinkApp(
         selectedChatId = chat.id
         selectedTab = AppTab.Chats
         scope.launch {
-            bridgeClient.loadRecentSession(machine, chat.id, agent.id, path, session.sessionId, sessionLoadMessageLimit).result
+            bridgeClient.loadRecentSession(
+                machine,
+                chat.id,
+                agent.id,
+                path,
+                session.sessionId,
+                sessionLoadMessageLimit,
+                onSession = { sessionId, resumable -> handleSessionBinding(chat.id, sessionId, resumable) },
+            ).result
                 .onSuccess { messages ->
-                    upsertChat(chat.copy(messages = messages.ifEmpty { chat.messages }))
+                    val current = chats.firstOrNull { it.id == chat.id } ?: return@onSuccess
+                    upsertChat(current.copy(messages = messages.ifEmpty { current.messages }))
                 }
                 .onFailure {
-                    upsertChat(chat.withMessage(MessageRole.System, strings.openSessionFailed(it.message)))
+                    val current = chats.firstOrNull { current -> current.id == chat.id } ?: return@onFailure
+                    upsertChat(current.withMessage(MessageRole.System, strings.openSessionFailed(it.message)))
                 }
         }
     }
@@ -685,6 +702,7 @@ fun AgentLinkApp(
                 ?.takeIf { it.isNotBlank() }
                 ?.let { latestAgentPreviews[chatId] = it }
         }
+
     }
 
     fun updateApproval(approval: Approval, status: ApprovalStatus) {
@@ -774,7 +792,14 @@ fun AgentLinkApp(
         }
         val current = chats.firstOrNull { it.id == chatId }
         if (current != null) {
-            upsertChat(current.finishPrompt(operationId, status, System.currentTimeMillis()))
+            val finished = current.finishPrompt(operationId, status, System.currentTimeMillis())
+            upsertChat(
+                if (status == "completed" && finished.acpSessionId != null) {
+                    finished.bindAcpSession(finished.acpSessionId, resumable = true)
+                } else {
+                    finished
+                },
+            )
         }
         if (status == "cancelled") return
         if (!isFinalPromptCompletion(status, queueRemaining)) return
@@ -835,12 +860,24 @@ fun AgentLinkApp(
         )
         upsertChat(loading)
         scope.launch {
-            bridgeClient.loadRecentSession(machine, chat.id, chat.agentId, chat.workspacePath, session.sessionId, sessionLoadMessageLimit).result
+            val bound = loading.bindAcpSession(session.sessionId, resumable = true)
+            upsertChat(bound)
+            bridgeClient.loadRecentSession(
+                machine,
+                chat.id,
+                chat.agentId,
+                chat.workspacePath,
+                session.sessionId,
+                sessionLoadMessageLimit,
+                onSession = { sessionId, resumable -> handleSessionBinding(chat.id, sessionId, resumable) },
+            ).result
                 .onSuccess { messages ->
-                    upsertChat(loading.copy(messages = loading.messages + messages))
+                    val current = chats.firstOrNull { it.id == chat.id } ?: return@onSuccess
+                    upsertChat(current.copy(messages = current.messages + messages))
                 }
                 .onFailure {
-                    upsertChat(loading.withMessage(MessageRole.System, strings.resumeFailed(it.message)))
+                    val current = chats.firstOrNull { current -> current.id == chat.id } ?: return@onFailure
+                    upsertChat(current.withMessage(MessageRole.System, strings.resumeFailed(it.message)))
                 }
         }
     }
@@ -849,9 +886,17 @@ fun AgentLinkApp(
         modelDialogState = ModelDialogState(chat = chat, option = option)
         val machine = machines.firstOrNull { it.id == chat.machineId } ?: return
         scope.launch {
-            bridgeClient.refreshConfigOptions(machine, chat.id, chat.agentId, chat.workspacePath).result
+            bridgeClient.refreshConfigOptions(
+                machine,
+                chat.id,
+                chat.agentId,
+                chat.workspacePath,
+                chat.acpSessionId,
+                chat.acpSessionResumable,
+                onSession = { sessionId, resumable -> handleSessionBinding(chat.id, sessionId, resumable) },
+            ).result
                 .onSuccess { events ->
-                    val current = chats.firstOrNull { it.id == chat.id } ?: chat
+                    val current = chats.firstOrNull { it.id == chat.id } ?: return@onSuccess
                     val refreshed = current.copy(messages = events.fold(current.messages) { messages, event -> messages.mergeMessage(event) })
                     upsertChat(refreshed)
                     val refreshedOption = when {
@@ -864,7 +909,8 @@ fun AgentLinkApp(
                     }
                 }
                 .onFailure {
-                    upsertChat(chat.withMessage(MessageRole.System, strings.modelChangeFailed(it.message)))
+                    val current = chats.firstOrNull { current -> current.id == chat.id } ?: return@onFailure
+                    upsertChat(current.withMessage(MessageRole.System, strings.modelChangeFailed(it.message)))
                 }
         }
     }
@@ -883,12 +929,24 @@ fun AgentLinkApp(
         )
         upsertChat(changing)
         scope.launch {
-            bridgeClient.setConfigOption(machine, chat.id, chat.agentId, chat.workspacePath, option.id, value.value).result
+            bridgeClient.setConfigOption(
+                machine,
+                chat.id,
+                chat.agentId,
+                chat.workspacePath,
+                option.id,
+                value.value,
+                chat.acpSessionId,
+                chat.acpSessionResumable,
+                onSession = { sessionId, resumable -> handleSessionBinding(chat.id, sessionId, resumable) },
+            ).result
                 .onSuccess { events ->
-                    upsertChat(changing.copy(messages = changing.messages + events))
+                    val current = chats.firstOrNull { it.id == chat.id } ?: return@onSuccess
+                    upsertChat(current.copy(messages = current.messages + events))
                 }
                 .onFailure {
-                    upsertChat(changing.withMessage(MessageRole.System, strings.modelChangeFailed(it.message)))
+                    val current = chats.firstOrNull { current -> current.id == chat.id } ?: return@onFailure
+                    upsertChat(current.withMessage(MessageRole.System, strings.modelChangeFailed(it.message)))
                 }
         }
     }
@@ -988,6 +1046,8 @@ fun AgentLinkApp(
                         agentId = activeChat.agentId,
                         workspacePath = activeChat.workspacePath,
                         lastEventId = lastChatEventIds[activeChat.id] ?: 0,
+                        sessionId = activeChat.acpSessionId,
+                        sessionResumable = activeChat.acpSessionResumable,
                         queuedPrompts = activeChat.queuedPrompts,
                         onMessage = { event -> appendChatEvent(activeChat.id, event) },
                         onApproval = { request ->
@@ -1016,6 +1076,9 @@ fun AgentLinkApp(
                         },
                         onOperationDone = { operationType, status, operationId, queueRemaining ->
                             handleOperationDone(activeChat.id, operationType, status, operationId, queueRemaining)
+                        },
+                        onSession = { sessionId, resumable ->
+                            handleSessionBinding(activeChat.id, sessionId, resumable)
                         },
                         onEventId = { lastChatEventIds[activeChat.id] = maxOf(lastChatEventIds[activeChat.id] ?: 0, it) },
                         onFailure = {
@@ -1104,7 +1167,7 @@ fun AgentLinkApp(
                                             bridgeClient.removeQueuedPrompt(machine, chat.id, operationId).result
                                                 .onSuccess { removed ->
                                                     if (removed) {
-                                                        val current = chats.firstOrNull { it.id == chat.id } ?: chat
+                                                        val current = chats.firstOrNull { it.id == chat.id } ?: return@onSuccess
                                                         upsertChat(current.removeQueuedPrompt(operationId))
                                                     }
                                                 }
@@ -1133,7 +1196,17 @@ fun AgentLinkApp(
                                     upsertChat(updated)
                                     latestAgentPreviews.remove(chat.id)
                                     val activeConnection = chatConnections[chat.id]
-                                    if (activeConnection != null && activeConnection.sendPrompt(operationId, chat.agentId, chat.workspacePath, message)) {
+                                    if (
+                                        activeConnection != null &&
+                                        activeConnection.sendPrompt(
+                                            operationId,
+                                            chat.agentId,
+                                            chat.workspacePath,
+                                            message,
+                                            chat.acpSessionId,
+                                            chat.acpSessionResumable,
+                                        )
+                                    ) {
                                         // Persistent chat WebSocket owns streaming events and status updates.
                                     } else {
                                         scope.launch {
@@ -1144,6 +1217,8 @@ fun AgentLinkApp(
                                                 workspacePath = chat.workspacePath,
                                                 text = message,
                                                 operationId = operationId,
+                                                sessionId = chat.acpSessionId,
+                                                sessionResumable = chat.acpSessionResumable,
                                                 onMessage = { event -> appendChatEvent(chat.id, event) },
                                                 onPromptAccepted = { acceptedOperationId, state, content ->
                                                     handlePromptAccepted(chat.id, acceptedOperationId, state, content)
@@ -1156,6 +1231,9 @@ fun AgentLinkApp(
                                                 },
                                                 onStatus = { status, eventId, queuedCount, statusOperationId ->
                                                     updateChatStatus(chat.id, status, eventId, queuedCount, statusOperationId)
+                                                },
+                                                onSession = { sessionId, resumable ->
+                                                    handleSessionBinding(chat.id, sessionId, resumable)
                                                 },
                                                 onApproval = { request ->
                                                     appendChatEvent(
@@ -1175,7 +1253,7 @@ fun AgentLinkApp(
                                             )
                                             sendResult.result
                                                 .onFailure {
-                                                    val current = chats.firstOrNull { current -> current.id == chat.id } ?: updated
+                                                    val current = chats.firstOrNull { current -> current.id == chat.id } ?: return@onFailure
                                                     if (!sendResult.accepted) {
                                                         upsertChat(
                                                             current.copy(

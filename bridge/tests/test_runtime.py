@@ -7,7 +7,7 @@ import io
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from android_acp_bridge.acp_agent import AcpPromptRequest, _resolve_workspace
+from android_acp_bridge.acp_agent import AcpPromptRequest, AcpSessionBinding, _resolve_workspace
 from android_acp_bridge.config import BridgeConfig, WorkspaceConfig
 from android_acp_bridge.pairing import PairingStore
 from android_acp_bridge.runtime import BridgeRuntime, DeviceInfo, InvalidPairingTokenError, parse_device_info
@@ -146,7 +146,11 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(emitted[1]["type"], "chat.status")
         self.assertEqual(emitted[1]["status"], "busy")
         self.assertEqual(emitted[2]["type"], "operation.started")
-        self.assertEqual(emitted[3]["type"], "session/update")
+        self.assertEqual(emitted[3]["type"], "chat.session")
+        self.assertFalse(emitted[3]["resumable"])
+        first_update_index = next(index for index, event in enumerate(emitted) if event["type"] == "session/update")
+        self.assertLess(3, first_update_index)
+        self.assertTrue(any(event["type"] == "chat.session" and event["resumable"] for event in emitted))
         self.assertEqual(emitted[-2]["status"], "idle")
         self.assertEqual(emitted[-1]["type"], "bridge.done")
         event_ids = [event["eventId"] for event in emitted if "eventId" in event]
@@ -168,6 +172,32 @@ class RuntimeTests(unittest.TestCase):
         replayed = attach_responses[1:-1]
         self.assertTrue(all(response.get("eventId", 0) > first_event_id for response in replayed))
         self.assertEqual(attach_responses[-1]["type"], "chat.status")
+
+    def test_chat_attach_restores_persisted_session_binding(self) -> None:
+        manager = FakeAgentManager()
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=manager,
+        )
+
+        responses = runtime.websocket_responses(
+            {
+                "type": "chat.attach",
+                "chatId": "chat_1",
+                "agentId": "copilot-cli",
+                "workspacePath": "D:\\repo",
+                "sessionId": "sess_saved",
+                "sessionResumable": True,
+                "lastEventId": 0,
+            }
+        )
+
+        binding = next(response for response in responses if response["type"] == "chat.session")
+        self.assertEqual(binding["sessionId"], "sess_saved")
+        self.assertTrue(binding["resumable"])
+        self.assertEqual(manager.restored_sessions, [("chat_1", "sess_saved", True)])
 
     def test_chat_prompt_logs_client_and_agent_updates(self) -> None:
         runtime = BridgeRuntime(
@@ -313,7 +343,8 @@ class RuntimeTests(unittest.TestCase):
 
         responses = runtime.websocket_responses({"type": "session.load", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "sessionId": "sess_1"})
 
-        self.assertEqual(responses[0]["update"]["sessionUpdate"], "agent_message_chunk")
+        self.assertEqual(responses[0], {"type": "chat.session", "chatId": "chat_1", "sessionId": "sess_1", "resumable": True})
+        self.assertEqual(responses[1]["update"]["sessionUpdate"], "agent_message_chunk")
         self.assertEqual(responses[-1]["type"], "bridge.done")
 
     def test_session_load_recent_returns_latest_visible_messages(self) -> None:
@@ -335,7 +366,8 @@ class RuntimeTests(unittest.TestCase):
             }
         )
 
-        result = responses[0]
+        self.assertEqual(responses[0]["type"], "chat.session")
+        result = responses[1]
         self.assertEqual(result["type"], "session.loadRecent.result")
         self.assertEqual(result["sessionId"], "sess_1")
         self.assertEqual(result["scannedEvents"], 4)
@@ -352,8 +384,9 @@ class RuntimeTests(unittest.TestCase):
 
         responses = runtime.websocket_responses({"type": "session.setConfigOption", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "configId": "model", "value": "gpt-5.4"})
 
-        self.assertEqual(responses[0]["update"]["sessionUpdate"], "config_option_update")
-        self.assertEqual(responses[0]["update"]["configOptions"][0]["currentValue"], "gpt-5.4")
+        self.assertEqual(responses[0]["type"], "chat.session")
+        self.assertEqual(responses[1]["update"]["sessionUpdate"], "config_option_update")
+        self.assertEqual(responses[1]["update"]["configOptions"][0]["currentValue"], "gpt-5.4")
         self.assertEqual(responses[-1]["type"], "bridge.done")
 
     def test_session_refresh_config_options_returns_latest_config(self) -> None:
@@ -366,8 +399,9 @@ class RuntimeTests(unittest.TestCase):
 
         responses = runtime.websocket_responses({"type": "session.refreshConfigOptions", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo"})
 
-        self.assertEqual(responses[0]["update"]["sessionUpdate"], "config_option_update")
-        self.assertEqual(responses[0]["update"]["configOptions"][0]["id"], "model")
+        self.assertEqual(responses[0]["type"], "chat.session")
+        self.assertEqual(responses[1]["update"]["sessionUpdate"], "config_option_update")
+        self.assertEqual(responses[1]["update"]["configOptions"][0]["id"], "model")
         self.assertEqual(responses[-1]["type"], "bridge.done")
 
     def test_permission_request_emits_approval_and_waits_for_decision(self) -> None:
@@ -581,7 +615,12 @@ class RuntimeTests(unittest.TestCase):
 
 
 class FakeAgentManager:
-    def prompt(self, request: AcpPromptRequest, permission_callback=None, update_callback=None):
+    def __init__(self) -> None:
+        self.restored_sessions: list[tuple[str, str, bool]] = []
+
+    def prompt(self, request: AcpPromptRequest, permission_callback=None, update_callback=None, session_callback=None):
+        if session_callback is not None:
+            session_callback(AcpSessionBinding(request.session_id or "sess_created", request.session_resumable))
         if permission_callback is not None and request.prompt == "needs approval":
             option_id = permission_callback(
                 {
@@ -598,7 +637,7 @@ class FakeAgentManager:
                     }
                 }
             )
-            return [
+            updates = [
                 {
                     "type": "session/update",
                     "update": {
@@ -608,7 +647,10 @@ class FakeAgentManager:
                     },
                 }
             ]
-        return [
+            if session_callback is not None:
+                session_callback(AcpSessionBinding(request.session_id or "sess_created", True))
+            return updates
+        updates = [
             {
                 "type": "session/update",
                 "update": {
@@ -636,6 +678,9 @@ class FakeAgentManager:
                 },
             },
         ]
+        if session_callback is not None:
+            session_callback(AcpSessionBinding(request.session_id or "sess_created", True))
+        return updates
 
     def list_sessions(self, agent_id: str, workspace_path: str):
         return [{"sessionId": "sess_1", "cwd": workspace_path, "title": "Previous work", "updatedAt": "2026-07-07T00:00:00Z"}]
@@ -663,7 +708,29 @@ class FakeAgentManager:
             "truncated": False,
         }
 
-    def refresh_config_options(self, chat_id: str, agent_id: str, workspace_path: str):
+    def restore_session(
+        self,
+        chat_id: str,
+        agent_id: str,
+        workspace_path: str,
+        session_id: str,
+        session_resumable: bool,
+        session_callback,
+    ):
+        self.restored_sessions.append((chat_id, session_id, session_resumable))
+        session_callback(AcpSessionBinding(session_id, session_resumable))
+
+    def refresh_config_options(
+        self,
+        chat_id: str,
+        agent_id: str,
+        workspace_path: str,
+        session_id=None,
+        session_resumable=False,
+        session_callback=None,
+    ):
+        if session_callback is not None:
+            session_callback(AcpSessionBinding(session_id or "sess_created", session_resumable))
         return [
             {
                 "type": "session/update",
@@ -683,7 +750,19 @@ class FakeAgentManager:
             }
         ]
 
-    def set_config_option(self, chat_id: str, agent_id: str, workspace_path: str, config_id: str, value: str):
+    def set_config_option(
+        self,
+        chat_id: str,
+        agent_id: str,
+        workspace_path: str,
+        config_id: str,
+        value: str,
+        session_id=None,
+        session_resumable=False,
+        session_callback=None,
+    ):
+        if session_callback is not None:
+            session_callback(AcpSessionBinding(session_id or "sess_created", session_resumable))
         return [
             {
                 "type": "session/update",
@@ -706,15 +785,18 @@ class FakeAgentManager:
 
 class BlockingAgentManager(FakeAgentManager):
     def __init__(self) -> None:
+        super().__init__()
         self.started = threading.Event()
         self.release = threading.Event()
         self.prompts: list[str] = []
 
-    def prompt(self, request: AcpPromptRequest, permission_callback=None, update_callback=None):
+    def prompt(self, request: AcpPromptRequest, permission_callback=None, update_callback=None, session_callback=None):
+        if session_callback is not None:
+            session_callback(AcpSessionBinding(request.session_id or "sess_created", request.session_resumable))
         self.prompts.append(request.prompt)
         self.started.set()
         self.release.wait(timeout=5)
-        return [
+        updates = [
             {
                 "type": "session/update",
                 "update": {
@@ -723,6 +805,9 @@ class BlockingAgentManager(FakeAgentManager):
                 },
             }
         ]
+        if session_callback is not None:
+            session_callback(AcpSessionBinding(request.session_id or "sess_created", True))
+        return updates
 
 
 if __name__ == "__main__":

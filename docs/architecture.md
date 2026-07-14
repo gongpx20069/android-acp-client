@@ -112,6 +112,7 @@ Important fields:
 - `workspaceId`
 - `agentId`
 - `acpSessionId`
+- `acpSessionResumable`
 - `status`
 - `permissionMode`
 - `createdAt`
@@ -179,6 +180,7 @@ Android has a matching `ChatConnection` with:
 - last received `eventId`
 - local cached timeline
 - local input/composer state
+- the persisted ACP session ID and whether at least one prompt has made it resumable
 
 The bridge is authoritative for active execution status. Android may cache status for UI, but it must converge back to bridge state after reconnect.
 
@@ -192,11 +194,23 @@ On reconnect, Android sends `lastEventId`:
 {
   "type": "chat.attach",
   "chatId": "chat_123",
+  "sessionId": "sess_abc",
+  "sessionResumable": true,
   "lastEventId": 128
 }
 ```
 
 The bridge replays cached events with `eventId > lastEventId`, then sends the current `chat.status`. This prevents lost tool updates, approval requests, and `done` events across mobile network interruptions.
+
+### ACP Session Binding
+
+The Bridge emits a replayable `chat.session` event whenever a Chat creates, restores, or replaces its ACP session. Android immediately stores `sessionId` and `resumable` in encrypted Chat storage and includes them on future attach, prompt, and config requests.
+
+An ACP session created only to read config options may be an empty shell that the agent cannot list or load yet. Its binding has `resumable=false`. After the first successful `session/prompt`, the Bridge emits the same binding with `resumable=true`.
+
+After a Bridge restart, the first request for a bound Chat restores the supplied session ID before doing more work. If a non-resumable empty shell no longer exists, the Bridge may create a replacement and reports the old ID in `replacedSessionId`. A missing resumable session is an error and must never be silently replaced. Once a live session exists for a Chat, it remains authoritative over stale session IDs captured by already queued prompt requests.
+
+Session lifecycle changes are serialized per Chat, so attach recovery, recent-history loading, config changes, and prompts cannot stop or replace one another's ACP process. Attach reads an existing live binding without waiting for the active prompt, preserving reconnect and event replay while work is running. Different Chats use different lifecycle locks and remain concurrent.
 
 If Android's `lastEventId` is older than the bridge cache window, the bridge returns a resync-required event so Android can call `session.loadRecent` or ask the user to reopen the session.
 

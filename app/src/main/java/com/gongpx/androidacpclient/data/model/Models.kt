@@ -55,6 +55,7 @@ data class Chat(
     val agentName: String,
     val createdAtMillis: Long,
     val acpSessionId: String? = null,
+    val acpSessionResumable: Boolean = false,
     val messages: List<ChatMessage> = emptyList(),
     val queuedPrompts: List<QueuedPrompt> = emptyList(),
 )

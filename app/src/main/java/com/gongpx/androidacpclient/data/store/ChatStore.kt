@@ -63,11 +63,13 @@ class ChatStore(context: Context) {
             .put("agentName", agentName)
             .put("createdAtMillis", createdAtMillis)
             .put("acpSessionId", acpSessionId)
+            .put("acpSessionResumable", acpSessionResumable)
             .put("messages", JSONArray(messages.map { it.toJson() }))
             .put("queuedPrompts", JSONArray(queuedPrompts.map { it.toJson() }))
     }
 
     private fun JSONObject.toChat(): Chat {
+        val sessionId = optString("acpSessionId").ifBlank { null }
         return Chat(
             id = getString("id"),
             title = getString("title"),
@@ -79,7 +81,8 @@ class ChatStore(context: Context) {
             agentId = getString("agentId"),
             agentName = getString("agentName"),
             createdAtMillis = getLong("createdAtMillis"),
-            acpSessionId = optString("acpSessionId").ifBlank { null },
+            acpSessionId = sessionId,
+            acpSessionResumable = optBoolean("acpSessionResumable", sessionId != null),
             messages = optJSONArray("messages").orEmpty().mapJsonObjects { it.toChatMessage() },
             queuedPrompts = optJSONArray("queuedPrompts").orEmpty().mapJsonObjects { it.toQueuedPrompt() },
         )

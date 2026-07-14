@@ -1,5 +1,11 @@
 package com.gongpx.androidacpclient.data.model
 
+fun Chat.bindAcpSession(sessionId: String, resumable: Boolean): Chat {
+    if (sessionId.isBlank()) return this
+    val nextResumable = if (sessionId == acpSessionId) acpSessionResumable || resumable else resumable
+    return copy(acpSessionId = sessionId, acpSessionResumable = nextResumable)
+}
+
 fun Chat.startQueuedPrompt(operationId: String, content: String, nowMillis: Long): Chat {
     val queued = queuedPrompts.firstOrNull { it.operationId == operationId }
     val text = queued?.text ?: content

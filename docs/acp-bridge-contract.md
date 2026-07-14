@@ -172,6 +172,8 @@ Android opens or reconnects a persistent chat WebSocket by sending:
   "chatId": "chat_123",
   "agentId": "copilot-cli",
   "workspacePath": "D:\\repos\\android-agent-link",
+  "sessionId": "sess_abc",
+  "sessionResumable": true,
   "lastEventId": 128
 }
 ```
@@ -183,6 +185,8 @@ Bridge behavior:
 3. Ensure the bridge has a `ChatChannel` for the chat.
 4. Replay cached events with `eventId > lastEventId`.
 5. Send current `chat.status`.
+
+`sessionId` and `sessionResumable` are optional for a new Chat and required once Android has received a `chat.session` binding. They allow a restarted Bridge to restore the same ACP conversation.
 
 For `chat.prompt`, the bridge must send `operation.accepted` before execution or queueing. When execution begins it sends `operation.started` before any streamed ACP `session/update`. Streamed events must be sent exactly once, followed by `operation.done`. The bridge sends `chat.status=idle` only after the per-chat prompt queue drains.
 
@@ -230,6 +234,24 @@ Android should then reload the ACP session or ask the user to reopen the chat.
 - Bridge should keep a ring buffer per chat; the MVP target is at least 500 recent events per chat.
 - Approval requests and terminal operation events should remain replayable while they are still actionable.
 - Heartbeats are transport keepalive events and do not need to be replayed.
+
+### Bind ACP Session
+
+After ACP `session/new` or `session/load`, the Bridge emits:
+
+```json
+{
+  "type": "chat.session",
+  "eventId": 139,
+  "chatId": "chat_123",
+  "sessionId": "sess_abc",
+  "resumable": false
+}
+```
+
+`resumable=false` means the session may still be a config-only empty shell. After the first successful prompt, or immediately after loading an existing session, the Bridge emits the binding with `resumable=true`.
+
+On a Bridge restart, requests carrying a session binding must try ACP `session/load` before creating a new session. If loading a non-resumable empty shell fails, the Bridge may create a replacement and includes `replacedSessionId` in `chat.session`. If a resumable session cannot be loaded, the operation fails; the Bridge must not silently replace conversation history. A live Bridge session always wins over a stale binding on an already queued prompt.
 
 ### Start Chat
 
@@ -293,7 +315,7 @@ Response:
 }
 ```
 
-`truncated=true` means the bridge reached its safety cap before replay went idle, so the snapshot is best-effort.
+The Bridge drains and retains complete replay up to its safety event cap, then applies the requested visible-message limit after user/agent chunks have been merged into messages. If replay does not become idle before the safety deadline or event cap, loading fails and the ACP process is closed so partial history cannot be returned or leak into the next prompt.
 
 ### Send Prompt
 
@@ -306,6 +328,8 @@ Android sends a chat prompt over the attached chat WebSocket:
   "chatId": "chat_123",
   "agentId": "copilot-cli",
   "workspacePath": "D:\\repos\\android-agent-link",
+  "sessionId": "sess_abc",
+  "sessionResumable": true,
   "content": "Run the tests"
 }
 ```

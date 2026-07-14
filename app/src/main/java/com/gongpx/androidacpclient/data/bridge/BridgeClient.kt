@@ -90,12 +90,15 @@ class BridgeClient {
         workspacePath: String,
         text: String,
         operationId: String = "op_" + UUID.randomUUID(),
+        sessionId: String? = null,
+        sessionResumable: Boolean = false,
         onMessage: (ChatMessage) -> Unit = {},
         onApproval: (BridgeApprovalRequest) -> Unit = {},
         onPromptAccepted: (String, String, String) -> Unit = { _, _, _ -> },
         onPromptStarted: (String, String) -> Unit = { _, _ -> },
         onOperationDone: (String, String, String, Int) -> Unit = { _, _, _, _ -> },
         onStatus: (String, Int?, Int, String) -> Unit = { _, _, _, _ -> },
+        onSession: (String, Boolean) -> Unit = { _, _ -> },
     ): BridgeSendResult<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
@@ -105,7 +108,8 @@ class BridgeClient {
                 .put("chatId", chatId)
                 .put("agentId", agentId)
                 .put("workspacePath", workspacePath)
-                .put("content", text),
+                .put("content", text)
+                .putSessionBinding(sessionId, sessionResumable),
             onMessage = onMessage,
             onApproval = onApproval,
             onEvent = { event ->
@@ -138,6 +142,9 @@ class BridgeClient {
                             event.optInt("queuedCount", 0),
                             event.optString("operationId"),
                         )
+                    }
+                    "chat.session" -> mainHandler.post {
+                        onSession(event.optString("sessionId"), event.optBoolean("resumable"))
                     }
                 }
             },
@@ -186,7 +193,14 @@ class BridgeClient {
         }.result
     }
 
-    suspend fun loadSession(machine: Machine, chatId: String, agentId: String, workspacePath: String, sessionId: String): BridgeSendResult<List<ChatMessage>> {
+    suspend fun loadSession(
+        machine: Machine,
+        chatId: String,
+        agentId: String,
+        workspacePath: String,
+        sessionId: String,
+        onSession: (String, Boolean) -> Unit = { _, _ -> },
+    ): BridgeSendResult<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
@@ -195,11 +209,24 @@ class BridgeClient {
                 .put("agentId", agentId)
                 .put("workspacePath", workspacePath)
                 .put("sessionId", sessionId),
+            onEvent = { event ->
+                if (event.optString("type") == "chat.session") {
+                    mainHandler.post { onSession(event.optString("sessionId"), event.optBoolean("resumable")) }
+                }
+            },
             allowPartialOnFailure = true,
         )
     }
 
-    suspend fun loadRecentSession(machine: Machine, chatId: String, agentId: String, workspacePath: String, sessionId: String, limit: Int): BridgeSendResult<List<ChatMessage>> {
+    suspend fun loadRecentSession(
+        machine: Machine,
+        chatId: String,
+        agentId: String,
+        workspacePath: String,
+        sessionId: String,
+        limit: Int,
+        onSession: (String, Boolean) -> Unit = { _, _ -> },
+    ): BridgeSendResult<List<ChatMessage>> {
         return sendRawBridgeMessage(
             machine,
             JSONObject()
@@ -210,6 +237,11 @@ class BridgeClient {
                 .put("sessionId", sessionId)
                 .put("limit", limit),
             allowPartialOnFailure = true,
+            onEvent = { event ->
+                if (event.optString("type") == "chat.session") {
+                    mainHandler.post { onSession(event.optString("sessionId"), event.optBoolean("resumable")) }
+                }
+            },
         ).map { events ->
             val result = events.firstOrNull { it.optString("type") == "session.loadRecent.result" }
                 ?: throw IOException("Bridge did not return recent session history.")
@@ -225,6 +257,9 @@ class BridgeClient {
         workspacePath: String,
         configId: String,
         value: String,
+        sessionId: String? = null,
+        sessionResumable: Boolean = false,
+        onSession: (String, Boolean) -> Unit = { _, _ -> },
     ): BridgeSendResult<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
@@ -234,18 +269,38 @@ class BridgeClient {
                 .put("agentId", agentId)
                 .put("workspacePath", workspacePath)
                 .put("configId", configId)
-                .put("value", value),
+                .put("value", value)
+                .putSessionBinding(sessionId, sessionResumable),
+            onEvent = { event ->
+                if (event.optString("type") == "chat.session") {
+                    mainHandler.post { onSession(event.optString("sessionId"), event.optBoolean("resumable")) }
+                }
+            },
         )
     }
 
-    suspend fun refreshConfigOptions(machine: Machine, chatId: String, agentId: String, workspacePath: String): BridgeSendResult<List<ChatMessage>> {
+    suspend fun refreshConfigOptions(
+        machine: Machine,
+        chatId: String,
+        agentId: String,
+        workspacePath: String,
+        sessionId: String? = null,
+        sessionResumable: Boolean = false,
+        onSession: (String, Boolean) -> Unit = { _, _ -> },
+    ): BridgeSendResult<List<ChatMessage>> {
         return sendBridgeMessage(
             machine,
             JSONObject()
                 .put("type", "session.refreshConfigOptions")
                 .put("chatId", chatId)
                 .put("agentId", agentId)
-                .put("workspacePath", workspacePath),
+                .put("workspacePath", workspacePath)
+                .putSessionBinding(sessionId, sessionResumable),
+            onEvent = { event ->
+                if (event.optString("type") == "chat.session") {
+                    mainHandler.post { onSession(event.optString("sessionId"), event.optBoolean("resumable")) }
+                }
+            },
             allowPartialOnFailure = true,
         )
     }
@@ -256,6 +311,8 @@ class BridgeClient {
         agentId: String,
         workspacePath: String,
         lastEventId: Int,
+        sessionId: String? = null,
+        sessionResumable: Boolean = false,
         queuedPrompts: List<QueuedPrompt> = emptyList(),
         onMessage: (ChatMessage) -> Unit = {},
         onApproval: (BridgeApprovalRequest) -> Unit = {},
@@ -263,6 +320,7 @@ class BridgeClient {
         onPromptAccepted: (String, String, String) -> Unit = { _, _, _ -> },
         onPromptStarted: (String, String) -> Unit = { _, _ -> },
         onOperationDone: (String, String, String, Int) -> Unit = { _, _, _, _ -> },
+        onSession: (String, Boolean) -> Unit = { _, _ -> },
         onEventId: (Int) -> Unit = {},
         onResyncRequired: () -> Unit = {},
         onFailure: (Throwable) -> Unit = {},
@@ -296,6 +354,7 @@ class BridgeClient {
                             .put("agentId", agentId)
                             .put("workspacePath", workspacePath)
                             .put("lastEventId", lastEventId)
+                            .putSessionBinding(sessionId, sessionResumable)
                             .toString(),
                     )
                     queuedPrompts.forEach { queued ->
@@ -307,6 +366,7 @@ class BridgeClient {
                                 .put("agentId", agentId)
                                 .put("workspacePath", workspacePath)
                                 .put("content", queued.text)
+                                .putSessionBinding(sessionId, sessionResumable)
                                 .toString(),
                         )
                     }
@@ -352,6 +412,9 @@ class BridgeClient {
                                 event.optInt("queuedCount", 0),
                                 event.optString("operationId"),
                             )
+                        }
+                        "chat.session" -> mainHandler.post {
+                            onSession(event.optString("sessionId"), event.optBoolean("resumable"))
                         }
                         "chat.resyncRequired" -> mainHandler.post { onResyncRequired() }
                         "approval.requested" -> event.toApprovalRequest()?.let { request -> mainHandler.post { onApproval(request) } }
@@ -541,7 +604,17 @@ class BridgeClient {
         if (json.optString("type") == "bridge.done") {
             return ParsedBridgeMessage(done = true)
         }
-        if (json.optString("type") in setOf("bridge.accepted", "bridge.heartbeat", "chat.attached", "chat.status", "operation.accepted", "operation.done")) {
+        if (json.optString("type") in setOf(
+                "bridge.accepted",
+                "bridge.heartbeat",
+                "chat.attached",
+                "chat.status",
+                "chat.session",
+                "operation.accepted",
+                "operation.started",
+                "operation.done",
+            )
+        ) {
             return ParsedBridgeMessage()
         }
 
@@ -757,13 +830,28 @@ class BridgeClient {
     }
 }
 
+private fun JSONObject.putSessionBinding(sessionId: String?, resumable: Boolean): JSONObject {
+    if (!sessionId.isNullOrBlank()) {
+        put("sessionId", sessionId)
+        put("sessionResumable", resumable)
+    }
+    return this
+}
+
 class ChatConnection internal constructor(
     val chatId: String,
     private val sendJson: (JSONObject) -> Boolean,
 ) {
     private var closeHandler: (() -> Unit)? = null
 
-    fun sendPrompt(operationId: String, agentId: String, workspacePath: String, text: String): Boolean {
+    fun sendPrompt(
+        operationId: String,
+        agentId: String,
+        workspacePath: String,
+        text: String,
+        sessionId: String?,
+        sessionResumable: Boolean,
+    ): Boolean {
         return sendJson(
             JSONObject()
                 .put("type", "chat.prompt")
@@ -771,7 +859,8 @@ class ChatConnection internal constructor(
                 .put("chatId", chatId)
                 .put("agentId", agentId)
                 .put("workspacePath", workspacePath)
-                .put("content", text),
+                .put("content", text)
+                .putSessionBinding(sessionId, sessionResumable),
         )
     }
 

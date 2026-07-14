@@ -15,6 +15,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - Secure machine storage using AndroidX Security encrypted preferences.
 - Health, agents, and workspaces loading from the bridge.
 - New Chat form with two modes: create a new ACP session, or open an existing resumable ACP session returned by the selected machine and agent.
+- New and loaded Chats persist their ACP session ID and resumable state, then restore that exact session after Android or Bridge restarts.
 - Chat list and WhatsApp-style chat detail view with full conversation history.
 - Chat, approval, and machine list rows reveal a Delete button after a left swipe; swiping alone never deletes. Deleting a pending approval sends a deny decision before removing it locally.
 - Chat list rows and the chat detail header show a small status dot: busy while a prompt is running, idle otherwise.
@@ -59,6 +60,8 @@ Paired machine records may also include per-machine connection headers, such as 
 
 Unread chat IDs are stored with chat data in encrypted shared preferences. Opening or deleting a chat clears its unread state and cancels any matching completion notification.
 
+Chat records also store `acpSessionId` and `acpSessionResumable`. A session created only for model/config discovery remains non-resumable until its first prompt completes. Empty sessions are not expected to appear in the agent's resume list because they have no conversation history.
+
 ## Network Contract
 
 The app maps the pairing endpoint from WebSocket to HTTP for setup calls:
@@ -85,6 +88,7 @@ The app maps these bridge/ACP events:
 
 - `chat.attached` -> current chat WebSocket is attached to the bridge-side chat channel.
 - `chat.status` -> authoritative chat status for busy/idle/waitingApproval/disconnected UI.
+- `chat.session` -> persist the Chat's ACP session ID and resumable state. A newer `resumable=false` replay must not downgrade the same session after Android has observed `resumable=true`.
 - `operation.accepted` -> the bridge accepted a prompt/load/config operation.
 - `operation.accepted(state=starting)`, a legacy prompt acceptance without queue state, or `operation.started` -> the prompt is the active ACP turn; Android moves it from the pending area into the conversation timeline.
 - `operation.done` -> the bridge completed a prompt/load/config operation.
@@ -127,6 +131,7 @@ Android responsibilities:
 - Treat `operation.done` for a completed `chat.prompt` as the single completion signal for unread state and notifications.
 - Suppress completion attention while `operation.done.queueRemaining > 0`; notify only when the final queued prompt completes.
 - Persist queued prompt text and operation IDs in encrypted chat storage, reconcile accepted/started/done events idempotently after replay, and never discard queued text merely because an idle status arrives.
+- Include the persisted ACP session binding on attach, prompt, and config requests so a restarted Bridge restores the same agent conversation.
 - Track the active prompt operation independently of tool-call status. Ignore `chat.status=idle` until that prompt's `operation.done`, so completed tools cannot make an unfinished Agent turn appear idle.
 - Request Android notification permission on Android 13 or newer. If permission is denied, unread dots still work.
 
@@ -137,6 +142,8 @@ The bridge is responsible for event ordering and replay. Android is responsible 
 The bridge does not bind a workspace at startup. In New Session mode, workspace is selected per chat in the New Chat form by entering the remote absolute project path. Leaving the field blank uses `~`, which the bridge resolves to the remote machine user's home directory. The selected path maps to ACP `cwd` when the bridge creates the Copilot ACP session.
 
 In Existing Session mode, the user does not enter a workspace. AgentLink asks the selected machine and agent for all resumable sessions with ACP `session/list {}`. The selected session's own `cwd` becomes the local chat workspace display. Opening the session uses bridge `session.loadRecent`, which loads ACP history in the bridge, keeps only the newest visible user/agent message bubbles, and replaces the loading placeholder with that recent snapshot.
+
+Deleting an Android Chat removes only the local Chat record. A session with completed prompt history remains in the agent's session store and can be selected again through Existing Session. A config-only empty session has no recoverable conversation and may not be listed by the agent.
 
 The workspace does not have to be a Git repository, but Copilot's coding workflows work best inside a repository. If a parent folder such as `D:\peixianws` is selected instead of `D:\peixianws\android-agent-link`, Git-aware commands may report that the current directory is not a Git repository.
 

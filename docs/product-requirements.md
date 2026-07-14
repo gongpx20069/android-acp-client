@@ -26,6 +26,8 @@ Chat
 ### Chats
 
 - Show all chats across all machines.
+- Persist the ACP session ID behind each chat so app or bridge restarts continue the same agent conversation instead of creating a replacement.
+- Sessions with completed prompt history must remain discoverable through the agent after the local Android Chat is deleted.
 - Display chat title, machine, workspace, agent, status, and pending approval count.
 - Show an unread indicator for chats with completed Agent responses that the user has not opened.
 - Support creating a new chat.

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 from . import __version__
-from .acp_agent import AcpAgentError, AcpAgentManager, AcpPromptRequest
+from .acp_agent import AcpAgentError, AcpAgentManager, AcpPromptRequest, AcpSessionBinding
 from .agents import discover_agents
 from .config import BridgeConfig
 from .pairing import PairingStore
@@ -50,6 +50,8 @@ class PromptOperation:
     agent_id: str
     workspace_path: str
     content: str
+    session_id: str | None
+    session_resumable: bool
     emit: Callable[[dict[str, Any]], None] | None
     responses: list[dict[str, Any]]
     completed: threading.Event
@@ -63,6 +65,7 @@ class AgentManager(Protocol):
         request: AcpPromptRequest,
         permission_callback: Callable[[dict[str, Any]], str] | None = None,
         update_callback: Callable[[dict[str, Any]], None] | None = None,
+        session_callback: Callable[[AcpSessionBinding], None] | None = None,
     ) -> list[dict[str, Any]]:
         ...
 
@@ -75,10 +78,39 @@ class AgentManager(Protocol):
     def load_recent_session(self, chat_id: str, agent_id: str, workspace_path: str, session_id: str, limit: int) -> dict[str, Any]:
         ...
 
-    def refresh_config_options(self, chat_id: str, agent_id: str, workspace_path: str) -> list[dict[str, Any]]:
+    def restore_session(
+        self,
+        chat_id: str,
+        agent_id: str,
+        workspace_path: str,
+        session_id: str,
+        session_resumable: bool,
+        session_callback: Callable[[AcpSessionBinding], None],
+    ) -> None:
         ...
 
-    def set_config_option(self, chat_id: str, agent_id: str, workspace_path: str, config_id: str, value: str) -> list[dict[str, Any]]:
+    def refresh_config_options(
+        self,
+        chat_id: str,
+        agent_id: str,
+        workspace_path: str,
+        session_id: str | None = None,
+        session_resumable: bool = False,
+        session_callback: Callable[[AcpSessionBinding], None] | None = None,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def set_config_option(
+        self,
+        chat_id: str,
+        agent_id: str,
+        workspace_path: str,
+        config_id: str,
+        value: str,
+        session_id: str | None = None,
+        session_resumable: bool = False,
+        session_callback: Callable[[AcpSessionBinding], None] | None = None,
+    ) -> list[dict[str, Any]]:
         ...
 
 
@@ -221,6 +253,8 @@ class BridgeRuntime:
         prompt = _string_or_default(payload.get("content"), "")
         agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
         workspace_path = _string_or_default(payload.get("workspacePath"), "")
+        session_id = _optional_string(payload.get("sessionId"))
+        session_resumable = _bool_or_default(payload.get("sessionResumable"), False)
         responses: list[dict[str, Any]] = []
         operation = PromptOperation(
             chat_id=chat_id,
@@ -228,6 +262,8 @@ class BridgeRuntime:
             agent_id=agent_id,
             workspace_path=workspace_path,
             content=prompt,
+            session_id=session_id,
+            session_resumable=session_resumable,
             emit=emit,
             responses=responses,
             completed=threading.Event(),
@@ -310,6 +346,15 @@ class BridgeRuntime:
                 )
 
             try:
+                last_binding: AcpSessionBinding | None = None
+
+                def emit_session(binding: AcpSessionBinding) -> None:
+                    nonlocal last_binding
+                    if binding == last_binding:
+                        return
+                    last_binding = binding
+                    self._publish_prompt_event(operation, self._session_binding_event(chat_id, binding))
+
                 def emit_update(update: dict[str, Any]) -> None:
                     update.setdefault("chatId", chat_id)
                     update.setdefault("operationId", operation.operation_id)
@@ -321,6 +366,8 @@ class BridgeRuntime:
                         agent_id=operation.agent_id,
                         workspace_path=operation.workspace_path,
                         prompt=operation.content,
+                        session_id=operation.session_id,
+                        session_resumable=operation.session_resumable,
                     ),
                     permission_callback=lambda message: self._request_permission(
                         chat_id,
@@ -328,6 +375,7 @@ class BridgeRuntime:
                         lambda event: self._publish_prompt_event(operation, event),
                     ),
                     update_callback=emit_update if operation.emit is not None or chat_id in self._chat_emitters else None,
+                    session_callback=emit_session,
                 )
                 operation_status = "completed"
             except AcpAgentError as exc:
@@ -538,6 +586,7 @@ class BridgeRuntime:
         session_id = _string_or_default(payload.get("sessionId"), "")
         try:
             updates = self.agent_manager.load_session(chat_id, agent_id, workspace_path, session_id)
+            updates.insert(0, self._session_binding_event(chat_id, AcpSessionBinding(session_id, resumable=True)))
         except AcpAgentError as exc:
             updates = [
                 {
@@ -568,6 +617,7 @@ class BridgeRuntime:
             updates = result.get("updates", [])
             messages = _latest_visible_messages(updates if isinstance(updates, list) else [], limit)
             return [
+                self._session_binding_event(chat_id, AcpSessionBinding(session_id, resumable=True)),
                 {
                     "type": "session.loadRecent.result",
                     "chatId": chat_id,
@@ -635,13 +685,41 @@ class BridgeRuntime:
     ) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
         last_event_id = _int_or_default(payload.get("lastEventId"), 0)
+        session_id = _optional_string(payload.get("sessionId"))
+        binding_error: AcpAgentError | None = None
+        if session_id is not None:
+            try:
+                self.agent_manager.restore_session(
+                    chat_id,
+                    _string_or_default(payload.get("agentId"), "copilot-cli"),
+                    _string_or_default(payload.get("workspacePath"), ""),
+                    session_id,
+                    _bool_or_default(payload.get("sessionResumable"), False),
+                    lambda binding: self._append_event(chat_id, self._session_binding_event(chat_id, binding)),
+                )
+            except AcpAgentError as exc:
+                binding_error = exc
         with self._prompt_lock:
             active_operation = self._active_prompts.get(chat_id)
             queued_count = len(self._prompt_queues.get(chat_id, ()))
             with self._event_lock:
                 events = [event.copy() for event in self._event_logs.get(chat_id, []) if int(event.get("eventId", 0)) > last_event_id]
                 latest_event_id = self._next_event_ids.get(chat_id, 1) - 1
-                status = self._chat_status.get(chat_id, "idle")
+                session_events: list[dict[str, Any]] = []
+                if binding_error is not None:
+                    session_events.append(
+                        self._append_event(
+                            chat_id,
+                            {
+                                "type": "chat.session.error",
+                                "chatId": chat_id,
+                                "sessionId": session_id,
+                                "error": str(binding_error),
+                            },
+                        )
+                    )
+                status = "failed" if binding_error is not None else self._chat_status.get(chat_id, "idle")
+                self._chat_status[chat_id] = status
                 status_payload: dict[str, Any] = {
                     "type": "chat.status",
                     "chatId": chat_id,
@@ -659,6 +737,7 @@ class BridgeRuntime:
                         "replayed": len(events),
                     },
                     *events,
+                    *session_events,
                     status_event,
                 ]
                 if emit is not None:
@@ -709,14 +788,38 @@ class BridgeRuntime:
             event["operationId"] = operation_id
         return event
 
+    @staticmethod
+    def _session_binding_event(chat_id: str, binding: AcpSessionBinding) -> dict[str, Any]:
+        event: dict[str, Any] = {
+            "type": "chat.session",
+            "chatId": chat_id,
+            "sessionId": binding.session_id,
+            "resumable": binding.resumable,
+        }
+        if binding.replaced_session_id is not None:
+            event["replacedSessionId"] = binding.replaced_session_id
+        return event
+
     def _session_set_config_option_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
         agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
         workspace_path = _string_or_default(payload.get("workspacePath"), "")
         config_id = _string_or_default(payload.get("configId"), "")
         value = _string_or_default(payload.get("value"), "")
+        session_id = _optional_string(payload.get("sessionId"))
+        session_resumable = _bool_or_default(payload.get("sessionResumable"), False)
+        bindings: list[AcpSessionBinding] = []
         try:
-            updates = self.agent_manager.set_config_option(chat_id, agent_id, workspace_path, config_id, value)
+            updates = self.agent_manager.set_config_option(
+                chat_id,
+                agent_id,
+                workspace_path,
+                config_id,
+                value,
+                session_id,
+                session_resumable,
+                bindings.append,
+            )
         except AcpAgentError as exc:
             updates = [
                 {
@@ -734,14 +837,24 @@ class BridgeRuntime:
             ]
         for update in updates:
             update.setdefault("chatId", chat_id)
-        return updates + [{"type": "bridge.done", "chatId": chat_id}]
+        return [self._session_binding_event(chat_id, binding) for binding in bindings] + updates + [{"type": "bridge.done", "chatId": chat_id}]
 
     def _session_refresh_config_options_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
         agent_id = _string_or_default(payload.get("agentId"), "copilot-cli")
         workspace_path = _string_or_default(payload.get("workspacePath"), "")
+        session_id = _optional_string(payload.get("sessionId"))
+        session_resumable = _bool_or_default(payload.get("sessionResumable"), False)
+        bindings: list[AcpSessionBinding] = []
         try:
-            updates = self.agent_manager.refresh_config_options(chat_id, agent_id, workspace_path)
+            updates = self.agent_manager.refresh_config_options(
+                chat_id,
+                agent_id,
+                workspace_path,
+                session_id,
+                session_resumable,
+                bindings.append,
+            )
         except AcpAgentError as exc:
             updates = [
                 {
@@ -759,7 +872,7 @@ class BridgeRuntime:
             ]
         for update in updates:
             update.setdefault("chatId", chat_id)
-        return updates + [{"type": "bridge.done", "chatId": chat_id}]
+        return [self._session_binding_event(chat_id, binding) for binding in bindings] + updates + [{"type": "bridge.done", "chatId": chat_id}]
 
     def _log_client_prompt(self, payload: dict[str, Any]) -> None:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")
@@ -829,6 +942,14 @@ def parse_device_info(value: Any) -> DeviceInfo | None:
 
 def _string_or_default(value: Any, default: str) -> str:
     return value if isinstance(value, str) else default
+
+
+def _optional_string(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _bool_or_default(value: Any, default: bool) -> bool:
+    return value if isinstance(value, bool) else default
 
 
 def _int_or_default(value: Any, default: int) -> int:

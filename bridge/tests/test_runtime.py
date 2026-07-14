@@ -116,6 +116,30 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(responses[-2]["type"], "chat.status")
         self.assertEqual(responses[-1]["type"], "bridge.done")
 
+    def test_streaming_prompt_emits_busy_before_updates_without_duplicates(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+        emitted: list[dict] = []
+
+        responses = runtime.websocket_responses(
+            {"type": "chat.prompt", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "hello"},
+            emit=emitted.append,
+        )
+
+        self.assertEqual(responses, [])
+        self.assertEqual(emitted[0]["type"], "operation.accepted")
+        self.assertEqual(emitted[1]["type"], "chat.status")
+        self.assertEqual(emitted[1]["status"], "busy")
+        self.assertEqual(emitted[2]["type"], "session/update")
+        self.assertEqual(emitted[-2]["status"], "idle")
+        self.assertEqual(emitted[-1]["type"], "bridge.done")
+        event_ids = [event["eventId"] for event in emitted if "eventId" in event]
+        self.assertEqual(len(event_ids), len(set(event_ids)))
+
     def test_chat_attach_replays_events_after_last_event_id(self) -> None:
         runtime = BridgeRuntime(
             config=BridgeConfig(machine_name="devbox"),
@@ -358,12 +382,18 @@ class RuntimeTests(unittest.TestCase):
             if emitted:
                 break
             time.sleep(0.01)
-        self.assertEqual(emitted[0]["type"], "approval.requested")
-        runtime.websocket_responses({"type": "approval.decide", "approvalId": emitted[0]["approvalId"], "decision": "approved"})
+        for _ in range(100):
+            approval = next((event for event in emitted if event["type"] == "approval.requested"), None)
+            if approval is not None:
+                break
+            time.sleep(0.01)
+        self.assertIsNotNone(approval)
+        runtime.websocket_responses({"type": "approval.decide", "approvalId": approval["approvalId"], "decision": "approved"})
         thread.join(timeout=5)
 
         self.assertFalse(thread.is_alive())
-        session_updates = [response for response in responses_holder[0] if response["type"] == "session/update"]
+        self.assertEqual(responses_holder[0], [])
+        session_updates = [response for response in emitted if response["type"] == "session/update"]
         self.assertEqual(session_updates[0]["update"]["status"], "allow-once")
 
     def test_concurrent_prompt_for_same_chat_is_rejected(self) -> None:
@@ -395,6 +425,31 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("already processing", second[0]["update"]["content"]["error"])
         session_updates = [response for response in first_responses[0] if response["type"] == "session/update"]
         self.assertEqual(session_updates[0]["update"]["sessionUpdate"], "agent_message_chunk")
+
+    def test_chat_attach_reports_busy_while_prompt_is_running(self) -> None:
+        manager = BlockingAgentManager()
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=manager,
+        )
+
+        thread = threading.Thread(
+            target=lambda: runtime.websocket_responses(
+                {"type": "chat.prompt", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "first"}
+            )
+        )
+        thread.start()
+        self.assertTrue(manager.started.wait(timeout=5))
+
+        attached = runtime.websocket_responses({"type": "chat.attach", "chatId": "chat_1", "lastEventId": 0})
+
+        manager.release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(attached[-1]["type"], "chat.status")
+        self.assertEqual(attached[-1]["status"], "busy")
 
 
 class FakeAgentManager:

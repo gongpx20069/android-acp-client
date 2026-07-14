@@ -23,6 +23,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - In Chat detail, the history list and prompt composer move above the Android soft keyboard while the header stays anchored; the composer does not keep the bottom navigation bar gap above the keyboard.
 - Horizontally scrollable command chips above the prompt box.
 - Chat prompt WebSocket calls disable the client read timeout, send WebSocket pings, and ignore bridge accepted/heartbeat events; the bridge responds to pings and sends heartbeat messages during long-running Agent turns so idle network paths do not abort the prompt while waiting for ACP updates.
+- After a local prompt is submitted, Android keeps the optimistic busy state until the bridge confirms `busy` or `waitingApproval`; an attach/replay `idle` received before that confirmation must not clear the busy indicator.
 - Target chat communication uses a persistent WebSocket per open chat, with `chat.attach`, `lastEventId`, bridge event replay, operation IDs, and bridge-authoritative `chat.status`. The older one-shot WebSocket request flow is transitional.
 - Bilingual UI with a Settings language selector: System, English, or Chinese. System mode uses Chinese only when the device language is Chinese; otherwise it uses English.
 - Settings includes a Session load history limit. It defaults to 5 and controls how many recent chat message bubbles are appended when opening or resuming an existing ACP session; tool/activity cards and hidden command/config control updates do not count toward this limit.

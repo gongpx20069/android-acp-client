@@ -484,9 +484,10 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
     val chats = remember { mutableStateListOf<Chat>() }
     val approvals = remember { mutableStateListOf<Approval>() }
     val busyChatIds = remember { mutableStateListOf<String>() }
+    val pendingLocalPromptStartEventIds = remember { mutableStateMapOf<String, Int>() }
+    val authoritativeBusyEventIds = remember { mutableStateMapOf<String, Int>() }
     val chatConnections = remember { mutableStateMapOf<String, ChatConnection>() }
     val lastChatEventIds = remember { mutableStateMapOf<String, Int>() }
-    val localPromptStartEventIds = remember { mutableStateMapOf<String, Int>() }
     var selectedTab by remember { mutableStateOf(AppTab.Machines) }
     var selectedChatId by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -633,14 +634,32 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
     }
 
     fun updateChatStatus(chatId: String, status: String, eventId: Int? = null) {
-        if (status == "idle" && eventId != null && eventId <= (localPromptStartEventIds[chatId] ?: 0)) {
+        val pendingStartEventId = pendingLocalPromptStartEventIds[chatId]
+        if (status == "idle" && chatId in pendingLocalPromptStartEventIds) {
+            return
+        }
+        if (
+            (status == "busy" || status == "waitingApproval") &&
+            pendingStartEventId != null &&
+            (eventId == null || eventId <= pendingStartEventId)
+        ) {
+            return
+        }
+        if (status == "idle" && eventId != null && eventId <= (authoritativeBusyEventIds[chatId] ?: 0)) {
             return
         }
         when (status) {
-            "busy", "waitingApproval" -> if (chatId !in busyChatIds) busyChatIds.add(chatId)
+            "busy", "waitingApproval" -> {
+                if (chatId !in busyChatIds) busyChatIds.add(chatId)
+                pendingLocalPromptStartEventIds.remove(chatId)
+                if (eventId != null) {
+                    authoritativeBusyEventIds[chatId] = maxOf(authoritativeBusyEventIds[chatId] ?: 0, eventId)
+                }
+            }
             "idle", "failed", "disconnected" -> {
                 busyChatIds.remove(chatId)
-                localPromptStartEventIds.remove(chatId)
+                pendingLocalPromptStartEventIds.remove(chatId)
+                authoritativeBusyEventIds.remove(chatId)
             }
         }
     }
@@ -921,7 +940,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                     val updated = chat.withMessage(MessageRole.User, message)
                                     upsertChat(updated)
                                     if (chat.id !in busyChatIds) busyChatIds.add(chat.id)
-                                    localPromptStartEventIds[chat.id] = lastChatEventIds[chat.id] ?: 0
+                                    pendingLocalPromptStartEventIds[chat.id] = lastChatEventIds[chat.id] ?: 0
                                     val activeConnection = chatConnections[chat.id]
                                     if (activeConnection != null && activeConnection.sendPrompt(chat.agentId, chat.workspacePath, message)) {
                                         // Persistent chat WebSocket owns streaming events and status updates.
@@ -961,6 +980,8 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                             // keep the chat busy because the Agent may still be running on the bridge.
                                             if (sendResult.result.isSuccess || !sendResult.accepted) {
                                                 busyChatIds.remove(chat.id)
+                                                pendingLocalPromptStartEventIds.remove(chat.id)
+                                                authoritativeBusyEventIds.remove(chat.id)
                                             }
                                                 }
                                     }

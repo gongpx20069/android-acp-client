@@ -184,6 +184,8 @@ Bridge behavior:
 4. Replay cached events with `eventId > lastEventId`.
 5. Send current `chat.status`.
 
+For `chat.prompt`, the bridge must send `operation.accepted` and `chat.status=busy` before any streamed ACP `session/update`. Streamed events must be sent exactly once, followed by `operation.done`, `chat.status=idle`, and `bridge.done`.
+
 Example response:
 
 ```json

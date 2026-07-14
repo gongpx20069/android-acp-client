@@ -88,7 +88,7 @@ class BridgeRuntime:
         self._event_logs: dict[str, list[dict[str, Any]]] = {}
         self._next_event_ids: dict[str, int] = {}
         self._chat_status: dict[str, str] = {}
-        self._event_lock = threading.Lock()
+        self._event_lock = threading.RLock()
 
     def health_response(self) -> dict[str, Any]:
         return {"status": "ok", "bridgeVersion": __version__}
@@ -229,8 +229,16 @@ class BridgeRuntime:
                 done,
                 {"type": "bridge.done", "chatId": chat_id},
             ]
+        responses: list[dict[str, Any]] = []
+
+        def publish(response: dict[str, Any]) -> None:
+            if emit is None:
+                responses.append(response)
+            else:
+                emit(response)
+
         try:
-            responses: list[dict[str, Any]] = [
+            publish(
                 self._append_event(
                     chat_id,
                     {
@@ -239,16 +247,14 @@ class BridgeRuntime:
                         "operationId": operation_id,
                         "operationType": "chat.prompt",
                     },
-                ),
-                self._set_chat_status(chat_id, "busy", operation_id),
-            ]
+                )
+            )
+            publish(self._set_chat_status(chat_id, "busy", operation_id))
             try:
                 def emit_update(update: dict[str, Any]) -> None:
                     update.setdefault("chatId", chat_id)
                     update.setdefault("operationId", operation_id)
-                    event = self._append_event(chat_id, update)
-                    if emit is not None:
-                        emit(event)
+                    publish(self._append_event(chat_id, update))
 
                 updates = self.agent_manager.prompt(
                     AcpPromptRequest(
@@ -281,8 +287,8 @@ class BridgeRuntime:
             for update in updates:
                 update.setdefault("chatId", chat_id)
                 update.setdefault("operationId", operation_id)
-                responses.append(self._append_event(chat_id, update))
-            responses.append(
+                publish(self._append_event(chat_id, update))
+            publish(
                 self._append_event(
                     chat_id,
                     {
@@ -294,8 +300,8 @@ class BridgeRuntime:
                     },
                 )
             )
-            responses.append(self._set_chat_status(chat_id, "idle", operation_id if operation_status != "completed" else None))
-            responses.append({"type": "bridge.done", "chatId": chat_id})
+            publish(self._set_chat_status(chat_id, "idle", operation_id if operation_status != "completed" else None))
+            publish({"type": "bridge.done", "chatId": chat_id})
             return responses
         finally:
             self._mark_chat_idle(chat_id)
@@ -429,6 +435,7 @@ class BridgeRuntime:
             events = [event.copy() for event in self._event_logs.get(chat_id, []) if int(event.get("eventId", 0)) > last_event_id]
             latest_event_id = self._next_event_ids.get(chat_id, 1) - 1
             status = self._chat_status.get(chat_id, "idle")
+            status_event = self._append_event(chat_id, {"type": "chat.status", "chatId": chat_id, "status": status})
         return [
             {
                 "type": "chat.attached",
@@ -437,7 +444,7 @@ class BridgeRuntime:
                 "replayed": len(events),
             },
             *events,
-            self._append_event(chat_id, {"type": "chat.status", "chatId": chat_id, "status": status}),
+            status_event,
         ]
 
     def _resolve_approval(self, approval_id: str, decision: str) -> bool:
@@ -478,10 +485,10 @@ class BridgeRuntime:
     def _set_chat_status(self, chat_id: str, status: str, operation_id: str | None = None) -> dict[str, Any]:
         with self._event_lock:
             self._chat_status[chat_id] = status
-        event: dict[str, Any] = {"type": "chat.status", "chatId": chat_id, "status": status}
-        if operation_id is not None:
-            event["operationId"] = operation_id
-        return self._append_event(chat_id, event)
+            event: dict[str, Any] = {"type": "chat.status", "chatId": chat_id, "status": status}
+            if operation_id is not None:
+                event["operationId"] = operation_id
+            return self._append_event(chat_id, event)
 
     def _session_set_config_option_response(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         chat_id = _string_or_default(payload.get("chatId"), "unknown-chat")

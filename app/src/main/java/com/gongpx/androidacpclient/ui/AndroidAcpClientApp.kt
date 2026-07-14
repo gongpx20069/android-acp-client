@@ -1698,8 +1698,18 @@ private fun ChatDetailScreen(
                                     modifier = Modifier.weight(1f),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
-                                OutlinedButton(onClick = { onRemoveQueuedPrompt(queued.operationId) }) {
-                                    Text(strings.removeQueuedPrompt)
+                                Surface(
+                                    modifier = Modifier.clickable { onRemoveQueuedPrompt(queued.operationId) },
+                                    shape = RoundedCornerShape(999.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                    color = Color.Transparent,
+                                ) {
+                                    Text(
+                                        strings.removeQueuedPrompt,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AgentLink</string>
+    <string name="chat_completion_channel_name">Chat completions</string>
+    <string name="chat_completion_channel_description">Agent response previews when AgentLink is in the background</string>
 </resources>

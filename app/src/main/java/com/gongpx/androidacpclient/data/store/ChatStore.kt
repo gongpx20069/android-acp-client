@@ -32,10 +32,21 @@ class ChatStore(context: Context) {
 
     fun remove(chatId: String) {
         replaceAll(load().filterNot { it.id == chatId })
+        setUnread(chatId, false)
     }
 
     fun replaceAll(chats: List<Chat>) {
         preferences.edit().putString(KEY_CHATS, JSONArray(chats.map { it.toJson() }).toString()).apply()
+    }
+
+    fun loadUnreadChatIds(): Set<String> {
+        return preferences.getStringSet(KEY_UNREAD_CHAT_IDS, emptySet()).orEmpty().toSet()
+    }
+
+    fun setUnread(chatId: String, unread: Boolean) {
+        val next = loadUnreadChatIds().toMutableSet()
+        if (unread) next.add(chatId) else next.remove(chatId)
+        preferences.edit().putStringSet(KEY_UNREAD_CHAT_IDS, next).apply()
     }
 
     private fun Chat.toJson(): JSONObject {
@@ -102,5 +113,6 @@ class ChatStore(context: Context) {
 
     private companion object {
         const val KEY_CHATS = "chats"
+        const val KEY_UNREAD_CHAT_IDS = "unread_chat_ids"
     }
 }

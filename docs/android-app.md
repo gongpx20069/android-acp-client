@@ -18,6 +18,8 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - Chat list and WhatsApp-style chat detail view with full conversation history.
 - Chat, approval, and machine list rows support left-swipe deletion. Deleting a pending approval sends a deny decision before removing it locally.
 - Chat list rows and the chat detail header show a small status dot: busy while a prompt is running, idle otherwise.
+- Completed Agent responses show a red unread dot on the chat list until that chat is opened.
+- When a prompt completes while AgentLink is in the background, Android shows one system notification with the response preview. No completion notification is shown while the app is in the foreground, and tapping a notification opens the matching chat.
 - Opening a chat automatically scrolls to the newest message.
 - Fixed bottom prompt box for sending chat messages.
 - In Chat detail, the history list and prompt composer move above the Android soft keyboard while the header stays anchored; the composer does not keep the bottom navigation bar gap above the keyboard.
@@ -53,6 +55,8 @@ The scanner only accepts `acpclient://pair` QR payloads. Camera permission is re
 Paired machine records include endpoint, bridge fingerprint, and device token. These are stored through encrypted shared preferences. Do not replace this with plain shared preferences unless a separate secure-storage design is documented first.
 
 Paired machine records may also include per-machine connection headers, such as `X-Tunnel-Authorization` for a private Microsoft Dev Tunnel. Treat these headers like short-lived credentials: store them only in the encrypted machine record, send them only to that machine endpoint, and do not log them.
+
+Unread chat IDs are stored with chat data in encrypted shared preferences. Opening or deleting a chat clears its unread state and cancels any matching completion notification.
 
 ## Network Contract
 
@@ -98,6 +102,8 @@ The app maps these bridge/ACP events:
 
 The Android connection model is one `ChatConnection` per active chat. The connection opens when a chat detail screen is active or a background operation needs to keep the chat live.
 
+If the user leaves a chat detail screen while its prompt is still busy, Android keeps that chat connection until the bridge sends the terminal status. This allows `operation.done` to drive unread state and background completion notifications without sending duplicate notifications for streamed message chunks.
+
 On connect or reconnect, Android sends:
 
 ```json
@@ -116,6 +122,8 @@ Android responsibilities:
 - Treat WebSocket disconnect as transport state only; do not mark the agent idle unless the bridge sends `chat.status: idle`.
 - Retry `chat.attach` with exponential backoff while the user is viewing the chat.
 - Keep pending approvals visible after reconnect by replaying `approval.requested` events.
+- Treat `operation.done` for a completed `chat.prompt` as the single completion signal for unread state and notifications.
+- Request Android notification permission on Android 13 or newer. If permission is denied, unread dots still work.
 
 The bridge is responsible for event ordering and replay. Android is responsible for caching applied events and avoiding duplicate timeline entries.
 

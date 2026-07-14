@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
@@ -61,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.State
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -106,6 +108,8 @@ import com.gongpx.androidacpclient.data.model.ConfigOptionValue
 import com.gongpx.androidacpclient.data.model.ConnectionState
 import com.gongpx.androidacpclient.data.model.Machine
 import com.gongpx.androidacpclient.data.model.MessageRole
+import com.gongpx.androidacpclient.data.notification.ChatNotificationManager
+import com.gongpx.androidacpclient.data.notification.chatCompletionAttention
 import com.gongpx.androidacpclient.data.pairing.PairingLinkParser
 import com.gongpx.androidacpclient.data.store.AppLanguageMode
 import com.gongpx.androidacpclient.data.store.AppSettingsStore
@@ -240,6 +244,7 @@ private data class AppStrings(
     val setModel: String,
     val modelChangeFailed: (String?) -> String,
     val connectionFailed: (String?) -> String,
+    val agentFinished: String,
 ) {
     fun tabLabel(tab: AppTab): String = when (tab) {
         AppTab.Chats -> chats
@@ -355,6 +360,7 @@ private data class AppStrings(
             setModel = "Set model",
             modelChangeFailed = { "Model change failed: ${it.orUnknownError()}" },
             connectionFailed = { "Connection failed: ${it.orUnknownError()}" },
+            agentFinished = "Agent finished",
         )
 
         val Chinese = English.copy(
@@ -454,6 +460,7 @@ private data class AppStrings(
             setModel = "设置 model",
             modelChangeFailed = { "Model 修改失败：${it.orUnknownErrorZh()}" },
             connectionFailed = { "连接失败：${it.orUnknownErrorZh()}" },
+            agentFinished = "Agent 已完成",
         )
     }
 }
@@ -472,18 +479,25 @@ private fun AppLanguageMode.resolveStrings(): AppStrings {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
+fun AgentLinkApp(
+    incomingPairingLink: MutableState<String?>,
+    incomingChatId: MutableState<String?>,
+    appInForeground: State<Boolean>,
+) {
     val context = LocalContext.current
     val machineStore = remember { MachineStore(context.applicationContext) }
     val chatStore = remember { ChatStore(context.applicationContext) }
     val appSettingsStore = remember { AppSettingsStore(context.applicationContext) }
     val bridgeClient = remember { BridgeClient() }
+    val chatNotificationManager = remember { ChatNotificationManager(context.applicationContext) }
     val updateClient = remember { UpdateClient() }
     val parser = remember { PairingLinkParser() }
     val machines = remember { mutableStateListOf<Machine>() }
     val chats = remember { mutableStateListOf<Chat>() }
     val approvals = remember { mutableStateListOf<Approval>() }
     val busyChatIds = remember { mutableStateListOf<String>() }
+    val unreadChatIds = remember { mutableStateListOf<String>() }
+    val latestAgentPreviews = remember { mutableStateMapOf<String, String>() }
     val pendingLocalPromptStartEventIds = remember { mutableStateMapOf<String, Int>() }
     val authoritativeBusyEventIds = remember { mutableStateMapOf<String, Int>() }
     val chatConnections = remember { mutableStateMapOf<String, ChatConnection>() }
@@ -512,9 +526,28 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         chatStore.upsert(chat)
     }
 
+    fun setChatUnread(chatId: String, unread: Boolean) {
+        if (unread) {
+            if (chatId !in unreadChatIds) unreadChatIds.add(chatId)
+        } else {
+            unreadChatIds.remove(chatId)
+            chatNotificationManager.cancel(chatId)
+        }
+        chatStore.setUnread(chatId, unread)
+    }
+
+    fun openChat(chatId: String) {
+        selectedTab = AppTab.Chats
+        selectedChatId = chatId
+        setChatUnread(chatId, false)
+    }
+
     fun deleteChat(chat: Chat) {
         chats.removeAll { it.id == chat.id }
         chatStore.remove(chat.id)
+        unreadChatIds.remove(chat.id)
+        chatNotificationManager.cancel(chat.id)
+        chatConnections.remove(chat.id)?.close()
         if (selectedChatId == chat.id) selectedChatId = null
     }
 
@@ -621,7 +654,14 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
 
     fun appendChatEvent(chatId: String, message: ChatMessage) {
         val current = chats.firstOrNull { it.id == chatId } ?: return
-        upsertChat(current.copy(messages = current.messages.mergeMessage(message)))
+        val mergedMessages = current.messages.mergeMessage(message)
+        upsertChat(current.copy(messages = mergedMessages))
+        if (message.role == MessageRole.Agent && message.kind == ChatMessageKind.Message) {
+            mergedMessages.lastOrNull { it.role == MessageRole.Agent && it.kind == ChatMessageKind.Message }
+                ?.text
+                ?.takeIf { it.isNotBlank() }
+                ?.let { latestAgentPreviews[chatId] = it }
+        }
     }
 
     fun updateApproval(approval: Approval, status: ApprovalStatus) {
@@ -660,7 +700,30 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                 busyChatIds.remove(chatId)
                 pendingLocalPromptStartEventIds.remove(chatId)
                 authoritativeBusyEventIds.remove(chatId)
+                if (selectedChatId != chatId) {
+                    chatConnections.remove(chatId)?.close()
+                }
             }
+        }
+    }
+
+    fun handleOperationDone(chatId: String, operationType: String, status: String) {
+        if (operationType != "chat.prompt" || status != "completed") return
+        val chat = chats.firstOrNull { it.id == chatId } ?: return
+        val preview = latestAgentPreviews.remove(chatId)
+            ?.trim()
+            ?.take(240)
+            ?.takeIf { it.isNotBlank() }
+            ?: strings.agentFinished
+        val attention = chatCompletionAttention(
+            appInForeground = appInForeground.value,
+            chatIsOpen = selectedTab == AppTab.Chats && selectedChatId == chatId,
+        )
+        if (attention.markUnread) {
+            setChatUnread(chatId, true)
+        }
+        if (attention.showNotification) {
+            chatNotificationManager.showCompletion(chatId, chat.title, preview)
         }
     }
 
@@ -813,6 +876,8 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
         machines.addAll(machineStore.load())
         chats.clear()
         chats.addAll(chatStore.load())
+        unreadChatIds.clear()
+        unreadChatIds.addAll(chatStore.loadUnreadChatIds().filter { unreadChatId -> chats.any { it.id == unreadChatId } })
         checkForUpdate(manual = false)
     }
 
@@ -821,6 +886,19 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
             selectedTab = AppTab.Machines
             pairFromLink(link)
             incomingPairingLink.value = null
+        }
+    }
+
+    LaunchedEffect(incomingChatId.value, chats.size) {
+        incomingChatId.value?.takeIf { chatId -> chats.any { it.id == chatId } }?.let { chatId ->
+            openChat(chatId)
+            incomingChatId.value = null
+        }
+    }
+
+    LaunchedEffect(selectedTab, selectedChatId, appInForeground.value) {
+        if (appInForeground.value && selectedTab == AppTab.Chats) {
+            selectedChatId?.let { setChatUnread(it, false) }
         }
     }
 
@@ -835,7 +913,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                 if (machine == null) {
                     onDispose { }
                 } else {
-                    val connection = bridgeClient.openChatConnection(
+                    val connection = chatConnections[activeChat.id] ?: bridgeClient.openChatConnection(
                         machine = machine,
                         chatId = activeChat.id,
                         agentId = activeChat.agentId,
@@ -858,12 +936,17 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                             addApproval(activeChat, request)
                         },
                         onStatus = { status, eventId -> updateChatStatus(activeChat.id, status, eventId) },
+                        onOperationDone = { operationType, status ->
+                            handleOperationDone(activeChat.id, operationType, status)
+                        },
                         onEventId = { lastChatEventIds[activeChat.id] = maxOf(lastChatEventIds[activeChat.id] ?: 0, it) },
                         onFailure = { updateChatStatus(activeChat.id, "disconnected") },
                     )
                     chatConnections[activeChat.id] = connection
                     onDispose {
-                        chatConnections.remove(activeChat.id)?.close()
+                        if (activeChat.id !in busyChatIds) {
+                            chatConnections.remove(activeChat.id)?.close()
+                        }
                     }
                 }
             }
@@ -921,11 +1004,12 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                             machines = machines,
                             chats = chats,
                             busyChatIds = busyChatIds.toSet(),
+                            unreadChatIds = unreadChatIds.toSet(),
                             selectedChatId = selectedChatId,
                             onCreateChat = ::createChat,
                             onOpenExistingSession = ::openExistingSession,
                             onLoadExistingSessions = ::loadExistingSessions,
-                            onOpenChat = { selectedChatId = it.id },
+                            onOpenChat = { openChat(it.id) },
                             onDeleteChat = ::deleteChat,
                             onBackToList = { selectedChatId = null },
                             onResume = ::showResumeDialog,
@@ -939,6 +1023,7 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                 } else {
                                     val updated = chat.withMessage(MessageRole.User, message)
                                     upsertChat(updated)
+                                    latestAgentPreviews.remove(chat.id)
                                     if (chat.id !in busyChatIds) busyChatIds.add(chat.id)
                                     pendingLocalPromptStartEventIds[chat.id] = lastChatEventIds[chat.id] ?: 0
                                     val activeConnection = chatConnections[chat.id]
@@ -978,12 +1063,15 @@ fun AgentLinkApp(incomingPairingLink: MutableState<String?>) {
                                                 }
                                             // If the bridge accepted the prompt but the transient WebSocket broke before bridge.done,
                                             // keep the chat busy because the Agent may still be running on the bridge.
+                                            if (sendResult.result.isSuccess) {
+                                                handleOperationDone(chat.id, "chat.prompt", "completed")
+                                            }
                                             if (sendResult.result.isSuccess || !sendResult.accepted) {
                                                 busyChatIds.remove(chat.id)
                                                 pendingLocalPromptStartEventIds.remove(chat.id)
                                                 authoritativeBusyEventIds.remove(chat.id)
                                             }
-                                                }
+                                       }
                                     }
                                 }
                             },
@@ -1158,6 +1246,7 @@ private fun ChatsScreen(
     machines: List<Machine>,
     chats: List<Chat>,
     busyChatIds: Set<String>,
+    unreadChatIds: Set<String>,
     selectedChatId: String?,
     onCreateChat: (Machine, String, Agent) -> Unit,
     onOpenExistingSession: (Machine, Agent, AgentSessionInfo) -> Unit,
@@ -1359,9 +1448,26 @@ private fun ChatsScreen(
                 SwipeToDeleteItem(onDelete = { onDeleteChat(chat) }) {
                     ElevatedCard(onClick = { onOpenChat(chat) }, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
                                 ChatStatusDot(isBusy = chat.id in busyChatIds, connectionState = machineState)
-                                Text(chat.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    chat.title,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                if (chat.id in unreadChatIds) {
+                                    Box(
+                                        Modifier
+                                            .size(10.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFFDC2626)),
+                                    )
+                                }
                             }
                             Text("${chat.machineName} · ${chat.workspacePath}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(strings.messages(chat.messages.size), style = MaterialTheme.typography.labelMedium)

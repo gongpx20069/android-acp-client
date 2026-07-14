@@ -27,6 +27,7 @@ Chat
 
 - Show all chats across all machines.
 - Display chat title, machine, workspace, agent, status, and pending approval count.
+- Show an unread indicator for chats with completed Agent responses that the user has not opened.
 - Support creating a new chat.
 - Support opening an existing chat.
 - Support completed, idle, running, failed, and disconnected states.
@@ -57,6 +58,8 @@ Permission modes for MVP:
 - Recover from mobile network drops by reconnecting and replaying missed bridge events.
 - Show busy, idle, waiting-for-approval, and disconnected states from bridge-reported chat status.
 - Provide quick access to approvals, diffs, logs, and chat settings.
+- When an Agent response completes while AgentLink is in the background, show a system notification with a response preview and a direct link to that chat.
+- Do not show completion notifications while AgentLink is in the foreground; use the chat-list unread indicator when the completed chat is not open.
 
 ### Approvals
 

@@ -93,6 +93,7 @@ class ChatStore(context: Context) {
             .put("operationId", operationId)
             .put("text", text)
             .put("createdAtMillis", createdAtMillis)
+            .put("removing", removing)
     }
 
     private fun JSONObject.toQueuedPrompt(): QueuedPrompt {
@@ -100,6 +101,7 @@ class ChatStore(context: Context) {
             operationId = getString("operationId"),
             text = getString("text"),
             createdAtMillis = getLong("createdAtMillis"),
+            removing = optBoolean("removing", false),
         )
     }
 

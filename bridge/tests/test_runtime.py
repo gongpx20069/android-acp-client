@@ -10,7 +10,7 @@ from pathlib import Path
 from android_acp_bridge.acp_agent import AcpPromptRequest, AcpSessionBinding, _resolve_workspace
 from android_acp_bridge.config import BridgeConfig, WorkspaceConfig
 from android_acp_bridge.pairing import PairingStore
-from android_acp_bridge.runtime import BridgeRuntime, DeviceInfo, InvalidPairingTokenError, parse_device_info
+from android_acp_bridge.runtime import BridgeRuntime, DeviceInfo, InvalidPairingTokenError, PromptOperation, parse_device_info
 
 
 def wait_for_event(events: list[dict], event_type: str, timeout: float = 5) -> dict:
@@ -424,7 +424,7 @@ class RuntimeTests(unittest.TestCase):
         session_updates = [response for response in emitted if response["type"] == "session/update"]
         self.assertEqual(session_updates[0]["update"]["status"], "allow-once")
 
-    def test_concurrent_prompt_for_same_chat_is_queued_fifo(self) -> None:
+    def test_waiting_prompts_are_batched_in_fifo_order_after_active_turn(self) -> None:
         manager = BlockingAgentManager()
         runtime = BridgeRuntime(
             config=BridgeConfig(machine_name="devbox"),
@@ -443,31 +443,79 @@ class RuntimeTests(unittest.TestCase):
             {"type": "chat.prompt", "operationId": "op_second", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "second"},
             emit=emitted.append,
         )
+        runtime.websocket_responses(
+            {"type": "chat.prompt", "operationId": "op_third", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "third"},
+            emit=emitted.append,
+        )
         queued = next(event for event in emitted if event.get("operationId") == "op_second" and event["type"] == "operation.accepted")
 
         self.assertEqual(queued["state"], "queued")
         self.assertEqual(manager.prompts, ["first"])
         manager.release.set()
         deadline = time.time() + 5
-        while manager.prompts != ["first", "second"] and time.time() < deadline:
+        while manager.prompts != ["first", "second\n\nthird"] and time.time() < deadline:
             time.sleep(0.01)
         done = [
             event for event in emitted
-            if event["type"] == "operation.done" and event.get("operationId") in {"op_first", "op_second"}
+            if event["type"] == "operation.done" and event.get("operationId") in {"op_first", "op_second", "op_third"}
         ]
-        while len(done) < 2 and time.time() < deadline:
+        while len(done) < 3 and time.time() < deadline:
             time.sleep(0.01)
             done = [
                 event for event in emitted
-                if event["type"] == "operation.done" and event.get("operationId") in {"op_first", "op_second"}
+                if event["type"] == "operation.done" and event.get("operationId") in {"op_first", "op_second", "op_third"}
             ]
 
-        self.assertEqual(manager.prompts, ["first", "second"])
-        self.assertEqual(len(done), 2)
-        self.assertEqual(done[0]["queueRemaining"], 1)
-        self.assertEqual(done[1]["queueRemaining"], 0)
+        self.assertEqual(manager.prompts, ["first", "second\n\nthird"])
+        self.assertEqual(len(done), 3)
+        self.assertEqual([event["queueRemaining"] for event in done], [2, 1, 0])
+        started = [
+            event for event in emitted
+            if event["type"] == "operation.started" and event.get("operationId") in {"op_second", "op_third"}
+        ]
+        self.assertEqual([event["content"] for event in started], ["second", "third"])
+        self.assertEqual([event["batchSize"] for event in started], [2, 2])
         idle_events = [event for event in emitted if event["type"] == "chat.status" and event["status"] == "idle"]
         self.assertEqual(len(idle_events), 1)
+
+    def test_prompts_added_while_batch_runs_wait_for_the_next_batch(self) -> None:
+        manager = SequencedBlockingAgentManager()
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=manager,
+        )
+        emitted: list[dict] = []
+
+        runtime.websocket_responses(
+            {"type": "chat.prompt", "operationId": "op_first", "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": "first"},
+            emit=emitted.append,
+        )
+        self.assertTrue(manager.started[0].wait(timeout=5))
+        for operation_id, content in [("op_second", "second"), ("op_third", "third")]:
+            runtime.websocket_responses(
+                {"type": "chat.prompt", "operationId": operation_id, "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": content},
+                emit=emitted.append,
+            )
+
+        manager.release[0].set()
+        self.assertTrue(manager.started[1].wait(timeout=5))
+        for operation_id, content in [("op_fourth", "fourth"), ("op_fifth", "fifth")]:
+            runtime.websocket_responses(
+                {"type": "chat.prompt", "operationId": operation_id, "chatId": "chat_1", "agentId": "copilot-cli", "workspacePath": "D:\\repo", "content": content},
+                emit=emitted.append,
+            )
+
+        manager.release[1].set()
+        self.assertTrue(manager.started[2].wait(timeout=5))
+        manager.release[2].set()
+        wait_for_event(emitted, "bridge.done")
+        deadline = time.time() + 5
+        while len(manager.prompts) < 3 and time.time() < deadline:
+            time.sleep(0.01)
+
+        self.assertEqual(manager.prompts, ["first", "second\n\nthird", "fourth\n\nfifth"])
 
     def test_queued_prompt_can_be_removed_before_it_starts(self) -> None:
         manager = BlockingAgentManager()
@@ -491,11 +539,194 @@ class RuntimeTests(unittest.TestCase):
         removed = runtime.websocket_responses(
             {"type": "chat.prompt.remove", "chatId": "chat_1", "operationId": "op_second"},
         )
+        removed_again = runtime.websocket_responses(
+            {"type": "chat.prompt.remove", "chatId": "chat_1", "operationId": "op_second"},
+        )
         manager.release.set()
         wait_for_event(emitted, "bridge.done")
 
         self.assertEqual(removed[0]["status"], "cancelled")
+        self.assertEqual(removed_again[0]["status"], "cancelled")
         self.assertEqual(manager.prompts, ["first"])
+
+    def test_removal_tombstone_cancels_prompt_that_arrives_later(self) -> None:
+        manager = BlockingAgentManager()
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=manager,
+        )
+
+        removed = runtime.websocket_responses(
+            {"type": "chat.prompt.remove", "chatId": "chat_1", "operationId": "op_late"},
+        )
+        prompt = runtime.websocket_responses(
+            {
+                "type": "chat.prompt",
+                "operationId": "op_late",
+                "chatId": "chat_1",
+                "agentId": "copilot-cli",
+                "workspacePath": "D:\\repo",
+                "content": "must not run",
+            },
+        )
+
+        self.assertEqual(removed[0]["status"], "cancelled")
+        self.assertEqual(prompt[0]["state"], "cancelled")
+        self.assertTrue(prompt[0]["duplicate"])
+        self.assertEqual(manager.prompts, [])
+
+    def test_unmatched_removal_tombstone_survives_operation_history_eviction(self) -> None:
+        manager = BlockingAgentManager()
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=manager,
+        )
+
+        for index in range(1001):
+            runtime.websocket_responses(
+                {
+                    "type": "chat.prompt.remove",
+                    "chatId": "chat_1",
+                    "operationId": f"op_cancel_{index}",
+                },
+            )
+        prompt = runtime.websocket_responses(
+            {
+                "type": "chat.prompt",
+                "operationId": "op_cancel_0",
+                "chatId": "chat_1",
+                "agentId": "copilot-cli",
+                "workspacePath": "D:\\repo",
+                "content": "must still not run",
+            },
+        )
+
+        self.assertEqual(prompt[0]["state"], "cancelled")
+        self.assertEqual(manager.prompts, [])
+
+    def test_matched_removal_tombstones_respect_operation_history_limit(self) -> None:
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=FakeAgentManager(),
+        )
+
+        for index in range(1100):
+            operation_id = f"op_cancel_{index}"
+            runtime.websocket_responses(
+                {
+                    "type": "chat.prompt.remove",
+                    "chatId": "chat_1",
+                    "operationId": operation_id,
+                },
+            )
+            runtime.websocket_responses(
+                {
+                    "type": "chat.prompt",
+                    "operationId": operation_id,
+                    "chatId": "chat_1",
+                    "agentId": "copilot-cli",
+                    "workspacePath": "D:\\repo",
+                    "content": "must not run",
+                },
+            )
+
+        self.assertLessEqual(len(runtime._prompt_operations), 1000)
+        self.assertLessEqual(len(runtime._cancelled_prompt_ids), 1000)
+
+    def test_matched_removal_is_protected_when_history_has_only_active_operations(self) -> None:
+        manager = BlockingAgentManager()
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=manager,
+        )
+        for index in range(1000):
+            operation = PromptOperation(
+                chat_id="chat_1",
+                operation_id=f"op_active_{index}",
+                agent_id="copilot-cli",
+                workspace_path="D:\\repo",
+                content="active",
+                session_id=None,
+                session_resumable=False,
+                emit=None,
+                responses=[],
+                completed=threading.Event(),
+                state="queued",
+                waiters=[],
+            )
+            runtime._prompt_operations[("chat_1", operation.operation_id)] = operation
+
+        runtime.websocket_responses(
+            {
+                "type": "chat.prompt.remove",
+                "chatId": "chat_1",
+                "operationId": "op_cancelled",
+            },
+        )
+        prompt = runtime.websocket_responses(
+            {
+                "type": "chat.prompt",
+                "operationId": "op_cancelled",
+                "chatId": "chat_1",
+                "agentId": "copilot-cli",
+                "workspacePath": "D:\\repo",
+                "content": "must not run",
+            },
+        )
+
+        self.assertEqual(prompt[0]["state"], "cancelled")
+        self.assertEqual(manager.prompts, [])
+        self.assertIn(("chat_1", "op_cancelled"), runtime._cancelled_prompt_ids)
+        self.assertNotIn(("chat_1", "op_cancelled"), runtime._prompt_operations)
+
+    def test_cancellation_retry_does_not_allow_duplicate_prompt_execution(self) -> None:
+        manager = BlockingAgentManager()
+        runtime = BridgeRuntime(
+            config=BridgeConfig(machine_name="devbox"),
+            pairing_store=PairingStore(),
+            require_local_pairing_confirmation=False,
+            agent_manager=manager,
+        )
+
+        runtime.websocket_responses(
+            {"type": "chat.prompt.remove", "chatId": "chat_1", "operationId": "op_cancelled"},
+        )
+        first_prompt = runtime.websocket_responses(
+            {
+                "type": "chat.prompt",
+                "operationId": "op_cancelled",
+                "chatId": "chat_1",
+                "agentId": "copilot-cli",
+                "workspacePath": "D:\\repo",
+                "content": "must not run",
+            },
+        )
+        retried_removal = runtime.websocket_responses(
+            {"type": "chat.prompt.remove", "chatId": "chat_1", "operationId": "op_cancelled"},
+        )
+        duplicate_prompt = runtime.websocket_responses(
+            {
+                "type": "chat.prompt",
+                "operationId": "op_cancelled",
+                "chatId": "chat_1",
+                "agentId": "copilot-cli",
+                "workspacePath": "D:\\repo",
+                "content": "must still not run",
+            },
+        )
+
+        self.assertEqual(first_prompt[0]["state"], "cancelled")
+        self.assertEqual(retried_removal[0]["status"], "cancelled")
+        self.assertEqual(duplicate_prompt[0]["state"], "cancelled")
+        self.assertEqual(manager.prompts, [])
 
     def test_queued_one_shot_prompts_keep_their_own_emitters(self) -> None:
         manager = BlockingAgentManager()
@@ -808,6 +1039,23 @@ class BlockingAgentManager(FakeAgentManager):
         if session_callback is not None:
             session_callback(AcpSessionBinding(request.session_id or "sess_created", True))
         return updates
+
+
+class SequencedBlockingAgentManager(FakeAgentManager):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = [threading.Event() for _ in range(3)]
+        self.release = [threading.Event() for _ in range(3)]
+        self.prompts: list[str] = []
+
+    def prompt(self, request: AcpPromptRequest, permission_callback=None, update_callback=None, session_callback=None):
+        index = len(self.prompts)
+        self.prompts.append(request.prompt)
+        self.started[index].set()
+        self.release[index].wait(timeout=5)
+        if session_callback is not None:
+            session_callback(AcpSessionBinding(request.session_id or "sess_created", True))
+        return []
 
 
 if __name__ == "__main__":

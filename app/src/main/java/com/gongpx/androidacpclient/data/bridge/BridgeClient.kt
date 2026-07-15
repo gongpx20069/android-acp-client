@@ -162,19 +162,19 @@ class BridgeClient {
         )
     }
 
-    suspend fun removeQueuedPrompt(machine: Machine, chatId: String, operationId: String): BridgeSendResult<Boolean> {
+    suspend fun removeQueuedPrompt(machine: Machine, chatId: String, operationId: String): BridgeSendResult<String?> {
         return sendRawBridgeMessage(
-            machine,
-            JSONObject()
+            machine = machine,
+            payload = JSONObject()
                 .put("type", "chat.prompt.remove")
                 .put("chatId", chatId)
                 .put("operationId", operationId),
+            allowPartialOnFailure = true,
         ).map { events ->
-            events.any {
+            events.lastOrNull {
                 it.optString("type") == "operation.done" &&
-                    it.optString("operationId") == operationId &&
-                    it.optString("status") == "cancelled"
-            }
+                    it.optString("operationId") == operationId
+            }?.optString("status")?.ifBlank { null }
         }
     }
 
@@ -357,22 +357,38 @@ class BridgeClient {
                             .putSessionBinding(sessionId, sessionResumable)
                             .toString(),
                     )
-                    queuedPrompts.forEach { queued ->
-                        webSocket.send(
-                            JSONObject()
-                                .put("type", "chat.prompt")
-                                .put("operationId", queued.operationId)
-                                .put("chatId", chatId)
-                                .put("agentId", agentId)
-                                .put("workspacePath", workspacePath)
-                                .put("content", queued.text)
-                                .putSessionBinding(sessionId, sessionResumable)
-                                .toString(),
-                        )
-                    }
                     synchronized(sendLock) {
+                        val pendingRemovals = pendingPayloads.filter {
+                            it.optString("type") == "chat.prompt.remove"
+                        }
+                        val pendingMessages = pendingPayloads.filterNot {
+                            it.optString("type") == "chat.prompt.remove"
+                        }
+                        queuedPrompts.filter { it.removing }.forEach { queued ->
+                            webSocket.send(
+                                JSONObject()
+                                    .put("type", "chat.prompt.remove")
+                                    .put("chatId", chatId)
+                                    .put("operationId", queued.operationId)
+                                    .toString(),
+                            )
+                        }
+                        pendingRemovals.forEach { pending -> webSocket.send(pending.toString()) }
+                        queuedPrompts.filterNot { it.removing }.forEach { queued ->
+                            webSocket.send(
+                                JSONObject()
+                                    .put("type", "chat.prompt")
+                                    .put("operationId", queued.operationId)
+                                    .put("chatId", chatId)
+                                    .put("agentId", agentId)
+                                    .put("workspacePath", workspacePath)
+                                    .put("content", queued.text)
+                                    .putSessionBinding(sessionId, sessionResumable)
+                                    .toString(),
+                            )
+                        }
+                        pendingMessages.forEach { pending -> webSocket.send(pending.toString()) }
                         socketReady = true
-                        pendingPayloads.forEach { pending -> webSocket.send(pending.toString()) }
                         pendingPayloads.clear()
                     }
                 }

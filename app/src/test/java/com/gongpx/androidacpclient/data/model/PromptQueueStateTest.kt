@@ -38,6 +38,51 @@ class PromptQueueStateTest {
     }
 
     @Test
+    fun batchedPromptsMoveIntoTimelineInFifoOrder() {
+        val chat = testChat().copy(
+            queuedPrompts = listOf(
+                QueuedPrompt("op_1", "first queued", 10),
+                QueuedPrompt("op_2", "second queued", 11),
+            ),
+        )
+
+        val started = chat
+            .startQueuedPrompt("op_1", "first queued", 20)
+            .startQueuedPrompt("op_2", "second queued", 21)
+
+        assertEquals(emptyList<QueuedPrompt>(), started.queuedPrompts)
+        assertEquals(listOf("first queued", "second queued"), started.messages.map { it.text })
+        assertEquals(listOf("op_1", "op_2"), started.messages.map { it.operationId })
+    }
+
+    @Test
+    fun queuedPromptRemovalIsHiddenWithDurableTombstone() {
+        val chat = testChat().copy(
+            queuedPrompts = listOf(
+                QueuedPrompt("op_1", "remove me", 10),
+                QueuedPrompt("op_2", "keep me", 11),
+            ),
+        )
+
+        val removing = chat.markQueuedPromptRemoving("op_1")
+
+        assertEquals(listOf("op_1", "op_2"), removing.queuedPrompts.map { it.operationId })
+        assertEquals(true, removing.queuedPrompts.first().removing)
+        assertEquals(false, removing.queuedPrompts.last().removing)
+    }
+
+    @Test
+    fun cancelledLifecycleRemovesDurableTombstone() {
+        val chat = testChat().copy(
+            queuedPrompts = listOf(QueuedPrompt("op_1", "remove me", 10, removing = true)),
+        )
+
+        val cancelled = chat.finishPrompt("op_1", "cancelled", 20)
+
+        assertEquals(emptyList<QueuedPrompt>(), cancelled.queuedPrompts)
+    }
+
+    @Test
     fun replayedStartDoesNotDuplicateUserMessage() {
         val chat = testChat().copy(
             messages = listOf(ChatMessage(MessageRole.User, "run tests", 20, operationId = "op_1")),
@@ -121,6 +166,39 @@ class PromptQueueStateTest {
         assertEquals(true, isTerminalPromptStatus("completed"))
         assertEquals(true, isTerminalPromptStatus("failed"))
         assertEquals(true, isTerminalPromptStatus("cancelled"))
+    }
+
+    @Test
+    fun alreadyStartedRemovalMovesHiddenPromptIntoTimeline() {
+        val chat = testChat().copy(
+            queuedPrompts = listOf(QueuedPrompt("op_1", "already running", 10, removing = true)),
+        )
+
+        val started = chat.finishPrompt("op_1", "already_started", 20)
+
+        assertEquals(emptyList<QueuedPrompt>(), started.queuedPrompts)
+        assertEquals("already running", started.messages.single().text)
+        assertEquals("op_1", started.messages.single().operationId)
+    }
+
+    @Test
+    fun cancellationClearsBusyOnlyForActivePromptWithoutMoreWork() {
+        assertEquals(true, shouldClearBusyAfterCancellation(true, emptyList()))
+        assertEquals(false, shouldClearBusyAfterCancellation(false, emptyList()))
+        assertEquals(
+            false,
+            shouldClearBusyAfterCancellation(
+                true,
+                listOf(QueuedPrompt("op_2", "next", 10)),
+            ),
+        )
+        assertEquals(
+            true,
+            shouldClearBusyAfterCancellation(
+                true,
+                listOf(QueuedPrompt("op_2", "also removing", 10, removing = true)),
+            ),
+        )
     }
 
     private fun testChat(): Chat {

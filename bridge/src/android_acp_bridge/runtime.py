@@ -57,6 +57,7 @@ class PromptOperation:
     completed: threading.Event
     state: str = "queued"
     waiters: list[Callable[[dict[str, Any]], None]] | None = None
+    batch_members: list["PromptOperation"] | None = None
 
 
 class AgentManager(Protocol):
@@ -133,6 +134,8 @@ class BridgeRuntime:
         self._prompt_queues: dict[str, deque[PromptOperation]] = {}
         self._active_prompts: dict[str, PromptOperation] = {}
         self._prompt_operations: dict[tuple[str, str], PromptOperation] = {}
+        self._pre_cancelled_prompt_ids: set[tuple[str, str]] = set()
+        self._cancelled_prompt_ids: dict[tuple[str, str], None] = {}
         self._prompt_lock = threading.RLock()
         self._chat_emitters: dict[str, Callable[[dict[str, Any]], None]] = {}
         self._event_logs: dict[str, list[dict[str, Any]]] = {}
@@ -270,7 +273,26 @@ class BridgeRuntime:
             waiters=[],
         )
         with self._prompt_lock:
-            existing = self._prompt_operations.get((chat_id, operation_id))
+            operation_key = (chat_id, operation_id)
+            if operation_key in self._pre_cancelled_prompt_ids:
+                self._pre_cancelled_prompt_ids.remove(operation_key)
+                self._remember_cancelled_prompt_id(operation_key)
+            if operation_key in self._cancelled_prompt_ids:
+                duplicate = {
+                    "type": "operation.accepted",
+                    "chatId": chat_id,
+                    "operationId": operation_id,
+                    "operationType": "chat.prompt",
+                    "state": "cancelled",
+                    "duplicate": True,
+                }
+                if emit is None:
+                    responses.extend([duplicate, {"type": "bridge.done", "chatId": chat_id}])
+                else:
+                    emit(duplicate)
+                    emit({"type": "bridge.done", "chatId": chat_id})
+                return responses
+            existing = self._prompt_operations.get(operation_key)
             if existing is not None:
                 duplicate = {
                     "type": "operation.accepted",
@@ -333,17 +355,20 @@ class BridgeRuntime:
                 operation = self._active_prompts.get(chat_id)
                 if operation is None:
                     return
-                operation.state = "running"
-                self._publish_prompt_event(
-                    operation,
-                    {
-                        "type": "operation.started",
-                        "chatId": chat_id,
-                        "operationId": operation.operation_id,
-                        "operationType": "chat.prompt",
-                        "content": operation.content,
-                    },
-                )
+                batch = operation.batch_members or [operation]
+                for member in batch:
+                    member.state = "running"
+                    self._publish_prompt_event(
+                        member,
+                        {
+                            "type": "operation.started",
+                            "chatId": chat_id,
+                            "operationId": member.operation_id,
+                            "operationType": "chat.prompt",
+                            "content": member.content,
+                            "batchSize": len(batch),
+                        },
+                    )
 
             try:
                 last_binding: AcpSessionBinding | None = None
@@ -365,7 +390,7 @@ class BridgeRuntime:
                         chat_id=chat_id,
                         agent_id=operation.agent_id,
                         workspace_path=operation.workspace_path,
-                        prompt=operation.content,
+                        prompt="\n\n".join(member.content for member in batch),
                         session_id=operation.session_id,
                         session_resumable=operation.session_resumable,
                     ),
@@ -403,37 +428,50 @@ class BridgeRuntime:
 
             with self._prompt_lock:
                 queue_for_chat = self._prompt_queues.setdefault(chat_id, deque())
-                next_operation = queue_for_chat.popleft() if queue_for_chat else None
-                queue_remaining = len(queue_for_chat)
+                next_batch = list(queue_for_chat)
+                queue_for_chat.clear()
+                next_operation = next_batch[0] if next_batch else None
                 if next_operation is None:
                     self._active_prompts.pop(chat_id, None)
                 else:
                     self._active_prompts[chat_id] = next_operation
-                    next_operation.state = "starting"
-                operation.state = operation_status
-                self._publish_prompt_event(
-                    operation,
-                    {
-                        "type": "operation.done",
-                        "chatId": chat_id,
-                        "operationId": operation.operation_id,
-                        "operationType": "chat.prompt",
-                        "status": operation_status,
-                        "queueRemaining": queue_remaining + (1 if next_operation is not None else 0),
-                    },
-                )
+                    next_operation.batch_members = next_batch
+                    for member in next_batch:
+                        member.state = "starting"
+                for index, member in enumerate(batch):
+                    member.state = operation_status
+                    queue_remaining = len(batch) - index - 1 + len(next_batch)
+                    self._publish_prompt_event(
+                        member,
+                        {
+                            "type": "operation.done",
+                            "chatId": chat_id,
+                            "operationId": member.operation_id,
+                            "operationType": "chat.prompt",
+                            "status": operation_status,
+                            "queueRemaining": queue_remaining,
+                            "batchSize": len(batch),
+                        },
+                    )
                 if next_operation is None:
                     self._publish_prompt_event(operation, self._chat_status_event(chat_id, "idle"))
                 else:
                     self._publish_prompt_event(
                         next_operation,
-                        self._chat_status_event(chat_id, "busy", next_operation.operation_id, queued_count=queue_remaining),
+                        self._chat_status_event(
+                            chat_id,
+                            "busy",
+                            next_operation.operation_id,
+                            queued_count=max(0, len(next_batch) - 1),
+                        ),
                     )
-                self._finish_prompt_transport(operation)
-                operation.completed.set()
-                operation.emit = None
-                operation.content = ""
-                operation.waiters = []
+                for member in batch:
+                    self._finish_prompt_transport(member)
+                    member.completed.set()
+                    member.emit = None
+                    member.content = ""
+                    member.waiters = []
+                    member.batch_members = None
                 self._evict_prompt_operation_history()
 
             if next_operation is None:
@@ -450,6 +488,10 @@ class BridgeRuntime:
         removed: PromptOperation | None = None
         with self._prompt_lock:
             queue_for_chat = self._prompt_queues.setdefault(chat_id, deque())
+            operation_key = (chat_id, operation_id)
+            existing = self._prompt_operations.get(operation_key)
+            pre_cancelled = operation_key in self._pre_cancelled_prompt_ids
+            cancelled = operation_key in self._cancelled_prompt_ids
             for operation in queue_for_chat:
                 if operation.operation_id == operation_id:
                     removed = operation
@@ -457,9 +499,17 @@ class BridgeRuntime:
             if removed is not None:
                 queue_for_chat.remove(removed)
                 removed.state = "cancelled"
+                self._remember_cancelled_prompt_id(operation_key)
+                cancelled = True
                 queue_remaining = len(queue_for_chat)
             else:
                 queue_remaining = len(queue_for_chat)
+                if existing is None and not pre_cancelled and not cancelled:
+                    self._pre_cancelled_prompt_ids.add(operation_key)
+                    pre_cancelled = True
+                elif existing is not None and existing.state == "cancelled":
+                    self._remember_cancelled_prompt_id(operation_key)
+                    cancelled = True
 
             with self._event_lock:
                 result = self._append_event(
@@ -469,7 +519,15 @@ class BridgeRuntime:
                         "chatId": chat_id,
                         "operationId": operation_id,
                         "operationType": "chat.prompt",
-                        "status": "cancelled" if removed is not None else "already_started",
+                        "status": (
+                            "cancelled"
+                            if (
+                                removed is not None
+                                or pre_cancelled
+                                or cancelled
+                            )
+                            else "already_started"
+                        ),
                         "queueRemaining": queue_remaining,
                     },
                 )
@@ -504,7 +562,7 @@ class BridgeRuntime:
                     removed.emit = None
                     removed.content = ""
                     removed.waiters = []
-                    self._evict_prompt_operation_history()
+                self._evict_prompt_operation_history()
         return responses
 
     def _publish_prompt_event(self, operation: PromptOperation, event: dict[str, Any]) -> None:
@@ -539,6 +597,12 @@ class BridgeRuntime:
         for waiter in operation.waiters or []:
             if operation.emit is None or not _same_emitter(waiter, [operation.emit]):
                 waiter(done)
+
+    def _remember_cancelled_prompt_id(self, operation_key: tuple[str, str]) -> None:
+        self._cancelled_prompt_ids.pop(operation_key, None)
+        self._cancelled_prompt_ids[operation_key] = None
+        while len(self._cancelled_prompt_ids) > PROMPT_OPERATION_HISTORY_LIMIT:
+            self._cancelled_prompt_ids.pop(next(iter(self._cancelled_prompt_ids)))
 
     def _evict_prompt_operation_history(self) -> None:
         overflow = len(self._prompt_operations) - PROMPT_OPERATION_HISTORY_LIMIT

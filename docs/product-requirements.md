@@ -59,8 +59,8 @@ Permission modes for MVP:
 - Maintain a persistent chat connection while the chat is active.
 - Recover from mobile network drops by reconnecting and replaying missed bridge events.
 - Show busy, idle, waiting-for-approval, and disconnected states from bridge-reported chat status.
-- Allow prompts submitted while a chat is busy or waiting for approval to queue for later execution in FIFO order.
-- Show queued prompts separately from the conversation timeline and allow removing a prompt before it starts.
+- Allow prompts submitted while a chat is busy or waiting for approval to queue in FIFO order. After the active response completes, concatenate every prompt already waiting and send them together as the next ACP turn; prompts added during that turn form the following batch.
+- Show queued prompts separately from the conversation timeline and allow removing a prompt before it starts, with immediate local feedback.
 - Provide quick access to approvals, diffs, logs, and chat settings.
 - When an Agent response completes while AgentLink is in the background, show a system notification with a response preview and a direct link to that chat.
 - Do not show completion notifications while AgentLink is in the foreground; use the chat-list unread indicator when the completed chat is not open.

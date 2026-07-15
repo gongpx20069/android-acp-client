@@ -64,6 +64,7 @@ data class QueuedPrompt(
     val operationId: String,
     val text: String,
     val createdAtMillis: Long,
+    val removing: Boolean = false,
 )
 
 data class AvailableCommand(

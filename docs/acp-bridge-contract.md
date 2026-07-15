@@ -188,7 +188,7 @@ Bridge behavior:
 
 `sessionId` and `sessionResumable` are optional for a new Chat and required once Android has received a `chat.session` binding. They allow a restarted Bridge to restore the same ACP conversation.
 
-For `chat.prompt`, the bridge must send `operation.accepted` before execution or queueing. When execution begins it sends `operation.started` before any streamed ACP `session/update`. Streamed events must be sent exactly once, followed by `operation.done`. The bridge sends `chat.status=idle` only after the per-chat prompt queue drains.
+For `chat.prompt`, the bridge must send `operation.accepted` before execution or queueing. When execution begins it sends `operation.started` for every member of the active batch before any streamed ACP `session/update`. Streamed events for the combined ACP turn must be sent exactly once, followed by one `operation.done` per batch member. The bridge sends `chat.status=idle` only after the per-chat prompt queue drains.
 
 Example response:
 
@@ -334,7 +334,7 @@ Android sends a chat prompt over the attached chat WebSocket:
 }
 ```
 
-The bridge starts or reuses the ACP agent session for `chatId`, creates the session with `workspacePath` as ACP `cwd`, and serializes prompt turns through a per-chat FIFO. Different chats may execute concurrently, but one chat never has overlapping ACP `session/prompt` requests. Immediately after accepting the operation, the bridge appends and sends:
+The bridge starts or reuses the ACP agent session for `chatId`, creates the session with `workspacePath` as ACP `cwd`, and serializes prompt turns through a per-chat FIFO. Different chats may execute concurrently, but one chat never has overlapping ACP `session/prompt` requests. At a turn boundary, the bridge atomically drains all operations already waiting, joins their content in FIFO order with two newline characters, and sends one ACP `session/prompt`. Operations accepted while that combined turn runs remain queued for the next batch. Immediately after accepting an operation, the bridge appends and sends:
 
 ```json
 {
@@ -349,7 +349,7 @@ The bridge starts or reuses the ACP agent session for `chatId`, creates the sess
 }
 ```
 
-If another prompt is already active, `state` is `queued` and `queuePosition` is one-based. When this prompt becomes active, the bridge sends:
+If another prompt is already active, `state` is `queued` and `queuePosition` is one-based. When a batch becomes active, the bridge sends one event for every member:
 
 ```json
 {
@@ -358,11 +358,12 @@ If another prompt is already active, `state` is `queued` and `queuePosition` is 
   "chatId": "chat_123",
   "operationId": "op_prompt_001",
   "operationType": "chat.prompt",
-  "content": "Run the tests"
+  "content": "Run the tests",
+  "batchSize": 2
 }
 ```
 
-The bridge keeps the chat busy and sends:
+Android uses these events to move every original user message into the timeline. ACP updates for the combined turn carry the first batch member's `operationId`. The bridge keeps the chat busy and sends:
 
 ```json
 {
@@ -418,11 +419,12 @@ When the operation ends:
   "chatId": "chat_123",
   "operationId": "op_prompt_001",
   "status": "completed",
-  "queueRemaining": 0
+  "queueRemaining": 0,
+  "batchSize": 2
 }
 ```
 
-If `queueRemaining` is greater than zero, the next queued operation starts without an intermediate idle state. A queued prompt may be removed before it starts:
+Every batch member receives its own terminal event. `queueRemaining` counts member operations that have not yet received a terminal event, including operations already assigned to the next batch. If it is greater than zero, processing continues without an intermediate idle state. A queued prompt may be removed before the bridge drains it into a batch:
 
 ```json
 {
@@ -432,7 +434,7 @@ If `queueRemaining` is greater than zero, the next queued operation starts witho
 }
 ```
 
-The removed operation receives `operation.done` with `status=cancelled`. If it has already started, the bridge returns `status=already_started` and does not cancel the active ACP turn.
+The removed operation receives `operation.done` with `status=cancelled`. Cancellation is idempotent. If the operation has not arrived yet, the Bridge records a cancelled tombstone, retains it until a matching prompt arrives, and then acknowledges that prompt as `state=cancelled` without executing it. If it has already been drained into an active batch, the bridge returns `status=already_started` and does not cancel the combined ACP turn. Android immediately hides the pending item but persists and retries its removal tombstone until replayable lifecycle events authoritatively reconcile it.
 
 ```json
 {

@@ -23,7 +23,7 @@ The initial Android app supports machine onboarding plus an MVP chat shell:
 - When a prompt completes while AgentLink is in the background, Android shows one system notification with the response preview. No completion notification is shown while the app is in the foreground, and tapping a notification opens the matching chat.
 - Opening a chat automatically scrolls to the newest message.
 - Fixed bottom prompt box for sending chat messages.
-- While an Agent turn is running, the send button becomes Add and submits the prompt to the bridge FIFO. Queued prompts appear in a separate pending area and can be removed before execution.
+- While an Agent turn is running, the send button becomes Add and submits the prompt to the bridge FIFO. At the next turn boundary, all prompts already waiting are shown as individual user messages but sent to ACP as one FIFO-ordered batch. Queued prompts appear in a separate pending area and tapping Remove hides one immediately while retaining a durable encrypted cancellation tombstone. Android retries pending cancellations with bounded exponential backoff, including after process restart, and never resends removed content.
 - In Chat detail, the history list and prompt composer move above the Android soft keyboard while the header stays anchored; the composer does not keep the bottom navigation bar gap above the keyboard.
 - Horizontally scrollable command chips above the prompt box.
 - Chat prompt WebSocket calls disable the client read timeout, send WebSocket pings, and ignore bridge accepted/heartbeat events; the bridge responds to pings and sends heartbeat messages during long-running Agent turns so idle network paths do not abort the prompt while waiting for ACP updates.
@@ -90,7 +90,7 @@ The app maps these bridge/ACP events:
 - `chat.status` -> authoritative chat status for busy/idle/waitingApproval/disconnected UI.
 - `chat.session` -> persist the Chat's ACP session ID and resumable state. A newer `resumable=false` replay must not downgrade the same session after Android has observed `resumable=true`.
 - `operation.accepted` -> the bridge accepted a prompt/load/config operation.
-- `operation.accepted(state=starting)`, a legacy prompt acceptance without queue state, or `operation.started` -> the prompt is the active ACP turn; Android moves it from the pending area into the conversation timeline.
+- `operation.accepted(state=starting)`, a legacy prompt acceptance without queue state, or `operation.started` -> the prompt is part of the active ACP turn; Android moves it from the pending area into the conversation timeline. One batched ACP turn may produce `operation.started` for multiple queued messages.
 - `operation.done` -> the bridge completed a prompt/load/config operation.
 - `chat.resyncRequired` -> Android's last event is outside the bridge replay cache; reload or reopen the session.
 - `session/update` + `tool_call` -> collapsed Agent Activity card.
@@ -130,7 +130,7 @@ Android responsibilities:
 - Keep pending approvals visible after reconnect by replaying `approval.requested` events.
 - Treat `operation.done` for a completed `chat.prompt` as the single completion signal for unread state and notifications.
 - Suppress completion attention while `operation.done.queueRemaining > 0`; notify only when the final queued prompt completes.
-- Persist queued prompt text and operation IDs in encrypted chat storage, reconcile accepted/started/done events idempotently after replay, and never discard queued text merely because an idle status arrives.
+- Persist queued prompt text, operation IDs, and removal tombstones in encrypted chat storage; reconcile accepted/started/done events idempotently after replay; and never discard queued text merely because an idle status arrives. A local Remove action updates the pending area immediately. Cancellation remains pending until `cancelled`, while a later `already_started` result moves the original prompt into the timeline instead of cancelling an active batch.
 - Include the persisted ACP session binding on attach, prompt, and config requests so a restarted Bridge restores the same agent conversation.
 - Track the active prompt operation independently of tool-call status. Ignore `chat.status=idle` until that prompt's `operation.done`, so completed tools cannot make an unfinished Agent turn appear idle.
 - Request Android notification permission on Android 13 or newer. If permission is denied, unread dots still work.

@@ -119,7 +119,8 @@ import com.gongpx.androidacpclient.data.model.bindAcpSession
 import com.gongpx.androidacpclient.data.model.finishPrompt
 import com.gongpx.androidacpclient.data.model.isFinalPromptCompletion
 import com.gongpx.androidacpclient.data.model.isTerminalPromptStatus
-import com.gongpx.androidacpclient.data.model.removeQueuedPrompt
+import com.gongpx.androidacpclient.data.model.markQueuedPromptRemoving
+import com.gongpx.androidacpclient.data.model.shouldClearBusyAfterCancellation
 import com.gongpx.androidacpclient.data.model.shouldApplyChatStatus
 import com.gongpx.androidacpclient.data.model.startQueuedPrompt
 import com.gongpx.androidacpclient.data.notification.ChatNotificationManager
@@ -137,6 +138,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.delay
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
@@ -773,6 +775,7 @@ fun AgentLinkApp(
     }
 
     fun handlePromptAccepted(chatId: String, operationId: String, state: String, content: String) {
+        val wasActivePrompt = activePromptOperationIds[chatId] == operationId
         when (state) {
             "", "starting", "running" -> activePromptOperationIds[chatId] = operationId
             "completed", "failed", "cancelled" -> {
@@ -782,7 +785,13 @@ fun AgentLinkApp(
             }
         }
         val chat = chats.firstOrNull { it.id == chatId } ?: return
-        upsertChat(chat.acceptPrompt(operationId, state, content, System.currentTimeMillis()))
+        val accepted = chat.acceptPrompt(operationId, state, content, System.currentTimeMillis())
+        upsertChat(accepted)
+        if (state == "cancelled" && shouldClearBusyAfterCancellation(wasActivePrompt, accepted.queuedPrompts)) {
+            busyChatIds.remove(chatId)
+            pendingLocalPromptStartEventIds.remove(chatId)
+            authoritativeBusyEventIds.remove(chatId)
+        }
     }
 
     fun handleOperationDone(
@@ -793,12 +802,13 @@ fun AgentLinkApp(
         queueRemaining: Int = 0,
     ) {
         if (operationType != "chat.prompt") return
-        if (isTerminalPromptStatus(status) && activePromptOperationIds[chatId] == operationId) {
+        val wasActivePrompt = activePromptOperationIds[chatId] == operationId
+        if (isTerminalPromptStatus(status) && wasActivePrompt) {
             activePromptOperationIds.remove(chatId)
         }
         val current = chats.firstOrNull { it.id == chatId }
-        if (current != null) {
-            val finished = current.finishPrompt(operationId, status, System.currentTimeMillis())
+        val finished = current?.finishPrompt(operationId, status, System.currentTimeMillis())
+        if (finished != null) {
             upsertChat(
                 if (status == "completed" && finished.acpSessionId != null) {
                     finished.bindAcpSession(finished.acpSessionId, resumable = true)
@@ -807,7 +817,17 @@ fun AgentLinkApp(
                 },
             )
         }
-        if (status == "cancelled") return
+        if (status == "cancelled") {
+            if (
+                finished != null &&
+                shouldClearBusyAfterCancellation(wasActivePrompt, finished.queuedPrompts)
+            ) {
+                busyChatIds.remove(chatId)
+                pendingLocalPromptStartEventIds.remove(chatId)
+                authoritativeBusyEventIds.remove(chatId)
+            }
+            return
+        }
         if (!isFinalPromptCompletion(status, queueRemaining)) return
         val chat = chats.firstOrNull { it.id == chatId } ?: return
         val preview = latestAgentPreviews.remove(chatId)
@@ -1029,6 +1049,40 @@ fun AgentLinkApp(
         }
     }
 
+    val queuedPromptRemovalKeys = chats.flatMap { chat ->
+        chat.queuedPrompts
+            .filter { it.removing }
+            .map { queued -> "${chat.id}:${queued.operationId}" }
+    }
+    LaunchedEffect(queuedPromptRemovalKeys, machines.toList()) {
+        var retryDelayMillis = 1_000L
+        while (true) {
+            val pendingRemovals = chats.flatMap { chat ->
+                chat.queuedPrompts
+                    .filter { it.removing }
+                    .map { queued -> chat to queued }
+            }
+            if (pendingRemovals.isEmpty()) break
+            pendingRemovals.forEach { (chat, queued) ->
+                val machine = machines.firstOrNull { it.id == chat.machineId } ?: return@forEach
+                bridgeClient.removeQueuedPrompt(machine, chat.id, queued.operationId).result
+                    .onSuccess { status ->
+                        when (status) {
+                            "cancelled", "already_started" -> handleOperationDone(
+                                chatId = chat.id,
+                                operationType = "chat.prompt",
+                                status = status,
+                                operationId = queued.operationId,
+                                queueRemaining = 0,
+                            )
+                        }
+                    }
+            }
+            delay(retryDelayMillis)
+            retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(30_000L)
+        }
+    }
+
     LaunchedEffect(selectedTab, selectedChatId, appInForeground.value) {
         if (appInForeground.value && selectedTab == AppTab.Chats) {
             selectedChatId?.let { setChatUnread(it, false) }
@@ -1038,7 +1092,17 @@ fun AgentLinkApp(
     MaterialTheme {
         CompositionLocalProvider(LocalAppStrings provides strings) {
         val activeChat = chats.firstOrNull { it.id == selectedChatId }
-        DisposableEffect(activeChat?.id, activeChat?.machineId, activeChat?.agentId, activeChat?.workspacePath) {
+        val removingPromptIds = activeChat?.queuedPrompts
+            ?.filter { it.removing }
+            ?.map { it.operationId }
+            .orEmpty()
+        DisposableEffect(
+            activeChat?.id,
+            activeChat?.machineId,
+            activeChat?.agentId,
+            activeChat?.workspacePath,
+            removingPromptIds,
+        ) {
             if (activeChat == null) {
                 onDispose { }
             } else {
@@ -1165,20 +1229,16 @@ fun AgentLinkApp(
                             onResume = ::showResumeDialog,
                             onModel = ::showModelDialog,
                             onRemoveQueuedPrompt = { chat, operationId ->
-                                val sent = chatConnections[chat.id]?.removeQueuedPrompt(operationId) == true
-                                if (!sent) {
-                                    val machine = machines.firstOrNull { it.id == chat.machineId }
-                                    if (machine != null) {
-                                        scope.launch {
-                                            bridgeClient.removeQueuedPrompt(machine, chat.id, operationId).result
-                                                .onSuccess { removed ->
-                                                    if (removed) {
-                                                        val current = chats.firstOrNull { it.id == chat.id } ?: return@onSuccess
-                                                        upsertChat(current.removeQueuedPrompt(operationId))
-                                                    }
-                                                }
-                                        }
-                                    }
+                                val current = chats.firstOrNull { it.id == chat.id } ?: chat
+                                if (current.queuedPrompts.none { it.operationId == operationId }) return@ChatsScreen
+                                val machine = machines.firstOrNull { it.id == chat.machineId }
+                                if (machine == null) {
+                                    upsertChat(current.withMessage(MessageRole.System, strings.machineUnavailable))
+                                    return@ChatsScreen
+                                }
+                                upsertChat(current.markQueuedPromptRemoving(operationId))
+                                if (chatConnections[chat.id]?.removeQueuedPrompt(operationId) != true) {
+                                    chatConnections.remove(chat.id)?.close()
                                 }
                             },
                             onSendMessage = { chat, message ->
@@ -1774,13 +1834,14 @@ private fun ChatDetailScreen(
 
             Surface(tonalElevation = 4.dp) {
                 Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                    if (chat.queuedPrompts.isNotEmpty()) {
+                    val visibleQueuedPrompts = chat.queuedPrompts.filterNot { it.removing }
+                    if (visibleQueuedPrompts.isNotEmpty()) {
                         Text(
-                            strings.queuedPrompts(chat.queuedPrompts.size),
+                            strings.queuedPrompts(visibleQueuedPrompts.size),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        chat.queuedPrompts.forEach { queued ->
+                        visibleQueuedPrompts.forEach { queued ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()

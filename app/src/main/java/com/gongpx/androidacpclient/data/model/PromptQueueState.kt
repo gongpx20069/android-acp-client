@@ -28,6 +28,14 @@ fun Chat.removeQueuedPrompt(operationId: String): Chat {
     return copy(queuedPrompts = queuedPrompts.filterNot { it.operationId == operationId })
 }
 
+fun Chat.markQueuedPromptRemoving(operationId: String): Chat {
+    return copy(
+        queuedPrompts = queuedPrompts.map { queued ->
+            if (queued.operationId == operationId) queued.copy(removing = true) else queued
+        },
+    )
+}
+
 fun Chat.acceptPrompt(
     operationId: String,
     state: String,
@@ -61,7 +69,7 @@ fun Chat.acceptPrompt(
 
 fun Chat.finishPrompt(operationId: String, status: String, nowMillis: Long): Chat {
     return when (status) {
-        "completed", "failed" -> startQueuedPrompt(operationId, "", nowMillis)
+        "completed", "failed", "already_started" -> startQueuedPrompt(operationId, "", nowMillis)
         "cancelled" -> removeQueuedPrompt(operationId)
         else -> this
     }
@@ -77,4 +85,8 @@ fun shouldApplyChatStatus(status: String, activeOperationId: String?): Boolean {
 
 fun isTerminalPromptStatus(status: String): Boolean {
     return status in setOf("completed", "failed", "cancelled")
+}
+
+fun shouldClearBusyAfterCancellation(wasActivePrompt: Boolean, queuedPrompts: List<QueuedPrompt>): Boolean {
+    return wasActivePrompt && queuedPrompts.none { !it.removing }
 }

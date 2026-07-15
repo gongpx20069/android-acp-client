@@ -231,7 +231,7 @@ Android should not infer chat busy/idle from WebSocket open/closed state. WebSoc
 
 ### Queued Prompt Operations
 
-ACP prompt turns are serial within one session. AgentLink therefore queues every `chat.prompt` at the bridge instead of issuing overlapping `session/prompt` requests. A per-chat worker runs one prompt at a time; workers for different chats remain independent.
+ACP prompt turns are serial within one session. AgentLink therefore queues every `chat.prompt` at the bridge instead of issuing overlapping `session/prompt` requests. A per-chat worker runs one prompt at a time; workers for different chats remain independent. At each turn boundary, the worker atomically drains every prompt already waiting, preserves their FIFO order, joins their text with blank lines, and sends the result as one ACP prompt. Prompts accepted after that drain wait for the following batch.
 
 ```text
 Android -> chat.prompt(op_1)
@@ -239,13 +239,18 @@ Bridge  -> operation.accepted(op_1, state=starting)
 Bridge  -> operation.started(op_1)
 Android -> chat.prompt(op_2)
 Bridge  -> operation.accepted(op_2, state=queued, queuePosition=1)
-Bridge  -> operation.done(op_1, queueRemaining=1)
-Bridge  -> operation.started(op_2)
-Bridge  -> operation.done(op_2, queueRemaining=0)
+Android -> chat.prompt(op_3)
+Bridge  -> operation.accepted(op_3, state=queued, queuePosition=2)
+Bridge  -> operation.done(op_1, queueRemaining=2)
+Bridge  -> operation.started(op_2, batchSize=2)
+Bridge  -> operation.started(op_3, batchSize=2)
+Bridge  -> ACP session/prompt("op_2 content\n\nop_3 content")
+Bridge  -> operation.done(op_2, queueRemaining=1, batchSize=2)
+Bridge  -> operation.done(op_3, queueRemaining=0, batchSize=2)
 Bridge  -> chat.status(idle)
 ```
 
-The chat stays `busy` between queued turns and becomes `idle` only after the queue drains. Prompt operation IDs are idempotency keys. A queued prompt can be removed before `operation.started`; an active prompt is not silently cancelled.
+Each batch member keeps its own operation ID and receives individual `operation.started` and `operation.done` events so Android can move each user message into the timeline and reconcile replay idempotently. ACP updates for the combined turn use the first member's operation ID. The chat stays `busy` between batches and becomes `idle` only after the queue drains. Prompt operation IDs are idempotency keys. Android persists a removal tombstone and retries it on the ordered chat channel; reconnect sends cancellation-only tombstones before normal queued prompts and never resends removed content. The Bridge also records cancellation that arrives before its prompt, preventing a late frame with that operation ID from executing. A queued prompt can be removed before the batch snapshot; a member already drained into an active batch is not silently cancelled.
 
 The WebSocket reader and writer run independently so the bridge can accept queue and approval messages while an ACP prompt request is still running. Chat events are serialized through the connection writer and remain replayable by `eventId`.
 

@@ -160,6 +160,8 @@ private enum class NewChatMode {
 }
 
 private val LocalAppStrings = staticCompositionLocalOf { AppStrings.English }
+private const val FEEDBACK_ISSUES_URL = "https://github.com/gongpx20069/android-agent-link/issues/new"
+private const val DEVELOPER_EMAIL = "gongpx20069@vip.qq.com"
 
 private data class AppStrings(
     val mobileControlSubtitle: String,
@@ -179,6 +181,11 @@ private data class AppStrings(
     val checkForUpdates: String,
     val downloadVersion: (String) -> String,
     val updateInstallNote: String,
+    val feedback: String,
+    val feedbackDescription: String,
+    val openGitHubIssue: String,
+    val developerContact: String,
+    val emailDeveloper: String,
     val noReleasesFound: String,
     val updateAvailable: (String) -> String,
     val latestVersion: String,
@@ -298,6 +305,11 @@ private data class AppStrings(
             checkForUpdates = "Check for updates",
             downloadVersion = { "Download $it" },
             updateInstallNote = "APK downloads open in the browser/system installer. Signed release APKs can update in-place after the signing key is configured.",
+            feedback = "Feedback",
+            feedbackDescription = "Report a bug or suggest an improvement on GitHub Issues.",
+            openGitHubIssue = "Open GitHub Issue",
+            developerContact = "Developer contact",
+            emailDeveloper = "Email developer",
             noReleasesFound = "No releases found.",
             updateAvailable = { "Update $it is available." },
             latestVersion = "You're on the latest version.",
@@ -405,6 +417,11 @@ private data class AppStrings(
             checkForUpdates = "检查更新",
             downloadVersion = { "下载 $it" },
             updateInstallNote = "APK 下载会通过浏览器或系统安装器打开。配置签名密钥后，signed release APK 可以原地升级。",
+            feedback = "反馈",
+            feedbackDescription = "通过 GitHub Issues 报告问题或提出改进建议。",
+            openGitHubIssue = "打开 GitHub Issue",
+            developerContact = "开发者联系方式",
+            emailDeveloper = "发送邮件",
             noReleasesFound = "未找到 release。",
             updateAvailable = { "发现更新 $it。" },
             latestVersion = "当前已是最新版本。",
@@ -1024,6 +1041,14 @@ fun AgentLinkApp(
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     }
 
+    fun openFeedbackIssue() {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(FEEDBACK_ISSUES_URL)))
+    }
+
+    fun emailDeveloper() {
+        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$DEVELOPER_EMAIL")))
+    }
+
     LaunchedEffect(Unit) {
         machines.clear()
         machines.addAll(machineStore.load())
@@ -1380,6 +1405,8 @@ fun AgentLinkApp(
                             },
                             onCheckForUpdate = { checkForUpdate(manual = true) },
                             onOpenUpdate = ::openUpdate,
+                            onOpenFeedbackIssue = ::openFeedbackIssue,
+                            onEmailDeveloper = ::emailDeveloper,
                         )
                     }
 
@@ -1415,6 +1442,8 @@ private fun SettingsScreen(
     onSessionLoadMessageLimitChange: (Int) -> Unit,
     onCheckForUpdate: () -> Unit,
     onOpenUpdate: (AppUpdate) -> Unit,
+    onOpenFeedbackIssue: () -> Unit,
+    onEmailDeveloper: () -> Unit,
 ) {
     val strings = LocalAppStrings.current
     var sessionLoadLimitText by remember(sessionLoadMessageLimit) { mutableStateOf(sessionLoadMessageLimit.toString()) }
@@ -1501,6 +1530,29 @@ private fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+        }
+        item {
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(strings.feedback, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        strings.feedbackDescription,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = onOpenFeedbackIssue) {
+                        Text(strings.openGitHubIssue)
+                    }
+                    Text(
+                        "${strings.developerContact}: $DEVELOPER_EMAIL",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = onEmailDeveloper) {
+                        Text(strings.emailDeveloper)
+                    }
                 }
             }
         }

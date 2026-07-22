@@ -22,6 +22,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +30,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -91,6 +93,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
@@ -112,6 +115,8 @@ import com.gongpx.androidacpclient.data.model.ConfigOption
 import com.gongpx.androidacpclient.data.model.ConfigOptionValue
 import com.gongpx.androidacpclient.data.model.ConnectionState
 import com.gongpx.androidacpclient.data.model.Machine
+import com.gongpx.androidacpclient.data.model.MarkdownTable
+import com.gongpx.androidacpclient.data.model.MarkdownTableAlignment
 import com.gongpx.androidacpclient.data.model.MessageRole
 import com.gongpx.androidacpclient.data.model.QueuedPrompt
 import com.gongpx.androidacpclient.data.model.acceptPrompt
@@ -120,6 +125,8 @@ import com.gongpx.androidacpclient.data.model.finishPrompt
 import com.gongpx.androidacpclient.data.model.isFinalPromptCompletion
 import com.gongpx.androidacpclient.data.model.isTerminalPromptStatus
 import com.gongpx.androidacpclient.data.model.markQueuedPromptRemoving
+import com.gongpx.androidacpclient.data.model.markdownCodeFenceDelimiterLength
+import com.gongpx.androidacpclient.data.model.parseMarkdownTable
 import com.gongpx.androidacpclient.data.model.shouldClearBusyAfterCancellation
 import com.gongpx.androidacpclient.data.model.shouldApplyChatStatus
 import com.gongpx.androidacpclient.data.model.startQueuedPrompt
@@ -2191,24 +2198,36 @@ private fun ChatTimelineItem(item: ChatMessage) {
 @Composable
 private fun MarkdownMessageText(text: String, color: Color) {
     val lines = text.lines()
-    var inCodeBlock = false
+    var codeFenceLength: Int? = null
     val codeLines = mutableListOf<String>()
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (line in lines) {
-            if (line.trim().startsWith("```")) {
-                if (inCodeBlock) {
+        var lineIndex = 0
+        while (lineIndex < lines.size) {
+            val line = lines[lineIndex]
+            val fenceLength = markdownCodeFenceDelimiterLength(line, codeFenceLength)
+            if (fenceLength != null) {
+                if (codeFenceLength != null) {
                     CodeBlock(codeLines.joinToString("\n"))
                     codeLines.clear()
-                    inCodeBlock = false
+                    codeFenceLength = null
                 } else {
-                    inCodeBlock = true
+                    codeFenceLength = fenceLength
                 }
+                lineIndex++
                 continue
             }
 
-            if (inCodeBlock) {
+            if (codeFenceLength != null) {
                 codeLines.add(line)
+                lineIndex++
+                continue
+            }
+
+            val table = parseMarkdownTable(lines, lineIndex)
+            if (table != null) {
+                MarkdownTableBlock(table.table, color)
+                lineIndex += table.consumedLineCount
                 continue
             }
 
@@ -2222,9 +2241,68 @@ private fun MarkdownMessageText(text: String, color: Color) {
                 trimmed.startsWith("> ") -> QuoteBlock(trimmed.removePrefix("> "), color)
                 else -> Text(parseInlineMarkdown(line), color = color)
             }
+            lineIndex++
         }
-        if (inCodeBlock && codeLines.isNotEmpty()) {
+        if (codeFenceLength != null && codeLines.isNotEmpty()) {
             CodeBlock(codeLines.joinToString("\n"))
+        }
+    }
+}
+
+@Composable
+private fun MarkdownTableBlock(table: MarkdownTable, color: Color) {
+    val columnWidths = table.headers.indices.map { columnIndex ->
+        val longestCell = (listOf(table.headers[columnIndex]) + table.rows.map { it[columnIndex] })
+            .maxOf { it.length }
+        (longestCell * 7 + 28).coerceIn(96, 220).dp
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = Color.Transparent,
+    ) {
+        Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            MarkdownTableRow(table.headers, table.alignments, columnWidths, color, header = true)
+            table.rows.forEach { row ->
+                MarkdownTableRow(row, table.alignments, columnWidths, color, header = false)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownTableRow(
+    cells: List<String>,
+    alignments: List<MarkdownTableAlignment>,
+    columnWidths: List<androidx.compose.ui.unit.Dp>,
+    color: Color,
+    header: Boolean,
+) {
+    Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+        cells.forEachIndexed { index, cell ->
+            val textAlign = when (alignments[index]) {
+                MarkdownTableAlignment.Start -> TextAlign.Start
+                MarkdownTableAlignment.Center -> TextAlign.Center
+                MarkdownTableAlignment.End -> TextAlign.End
+            }
+            Surface(
+                modifier = Modifier
+                    .width(columnWidths[index])
+                    .fillMaxHeight()
+                    .defaultMinSize(minHeight = 40.dp),
+                color = if (header) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f) else Color.Transparent,
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Text(
+                    text = parseInlineMarkdown(cell),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    color = color,
+                    fontWeight = if (header) FontWeight.SemiBold else FontWeight.Normal,
+                    textAlign = textAlign,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
@@ -2271,15 +2349,17 @@ private fun parseInlineMarkdown(input: String): AnnotatedString {
                 }
             }
             input[index] == '`' -> {
-                val end = input.indexOf('`', startIndex = index + 1)
-                if (end > index) {
+                val delimiterLength = countInlineBackticks(input, index)
+                val contentStart = index + delimiterLength
+                val end = findClosingInlineBackticks(input, contentStart, delimiterLength)
+                if (end >= contentStart) {
                     builder.pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = Color.Black.copy(alpha = 0.10f)))
-                    builder.append(input.substring(index + 1, end))
+                    builder.append(input.substring(contentStart, end))
                     builder.pop()
-                    index = end + 1
+                    index = end + delimiterLength
                 } else {
-                    builder.append(input[index])
-                    index++
+                    builder.append(input.substring(index, contentStart))
+                    index = contentStart
                 }
             }
             input[index] == '*' -> {
@@ -2315,6 +2395,26 @@ private fun parseInlineMarkdown(input: String): AnnotatedString {
         }
     }
     return builder.toAnnotatedString()
+}
+
+private fun countInlineBackticks(value: String, startIndex: Int): Int {
+    var index = startIndex
+    while (index < value.length && value[index] == '`') index++
+    return index - startIndex
+}
+
+private fun findClosingInlineBackticks(value: String, startIndex: Int, delimiterLength: Int): Int {
+    var index = startIndex
+    while (index < value.length) {
+        if (value[index] != '`') {
+            index++
+            continue
+        }
+        val runLength = countInlineBackticks(value, index)
+        if (runLength == delimiterLength) return index
+        index += runLength
+    }
+    return -1
 }
 
 @Composable
